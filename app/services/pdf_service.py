@@ -1,6 +1,7 @@
 """PDF generation service using ReportLab."""
 
 import io
+import json
 import logging
 import uuid
 from datetime import datetime
@@ -8,6 +9,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 
 from reportlab.lib import colors
+from reportlab.lib.enums import TA_LEFT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import inch, cm
 from reportlab.lib.utils import ImageReader
@@ -41,6 +43,79 @@ class PDFService:
         self.watermark_opacity = config.WATERMARK_OPACITY
         self.page_count = 0
         self.toc_entries: List[Dict[str, Any]] = []
+
+    def _try_parse_json(self, value: Any) -> Optional[Any]:
+        """Parse JSON if the value looks like a JSON string."""
+        if not isinstance(value, str):
+            return None
+        trimmed = value.strip()
+        if not trimmed or trimmed[0] not in "{[" or trimmed[-1] not in "}]":
+            return None
+        try:
+            return json.loads(trimmed)
+        except json.JSONDecodeError:
+            return None
+
+    def _flatten_data(self, value: Any, prefix: str = "") -> List[List[str]]:
+        """Flatten nested dict/list into path/value pairs."""
+        rows: List[List[str]] = []
+        if isinstance(value, dict):
+            for key, val in value.items():
+                path = f"{prefix}.{key}" if prefix else str(key)
+                rows.extend(self._flatten_data(val, path))
+        elif isinstance(value, list):
+            if not value:
+                rows.append([prefix or "items", "[]"])
+            for idx, val in enumerate(value):
+                path = f"{prefix}[{idx}]" if prefix else f"[{idx}]"
+                rows.extend(self._flatten_data(val, path))
+        else:
+            rows.append([prefix or "value", str(value)])
+        return rows
+
+    def _add_complex_bullet(self, elements: List, item: Any) -> None:
+        """Render complex bullet item (dict/list) as a key/value table."""
+        rows = self._flatten_data(item)
+        cell_style = ParagraphStyle(
+            "TableCell",
+            parent=self.styles['BodyText'],
+            fontSize=8.5,
+            leading=10,
+            alignment=TA_LEFT,
+            wordWrap="CJK",
+        )
+        header_style = ParagraphStyle(
+            "TableHeader",
+            parent=self.styles['BodyText'],
+            fontName="Helvetica-Bold",
+            fontSize=9,
+            leading=11,
+            alignment=TA_LEFT,
+            textColor=WHITE,
+            wordWrap="CJK",
+        )
+
+        table_rows = [[Paragraph("Field", header_style), Paragraph("Value", header_style)]]
+        for field, value in rows:
+            table_rows.append([
+                Paragraph(str(field), cell_style),
+                Paragraph(str(value), cell_style),
+            ])
+
+        table = Table(table_rows, colWidths=[2.3 * inch, 3.7 * inch])
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), PRIMARY_COLOR),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('GRID', (0, 0), (-1, -1), 0.5, LIGHT_GRAY),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [WHITE, LIGHT_GRAY]),
+            ('LEFTPADDING', (0, 0), (-1, -1), 6),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+            ('TOPPADDING', (0, 0), (-1, -1), 4),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ]))
+        elements.append(table)
+        elements.append(Spacer(1, 0.2 * inch))
 
     def _draw_watermark(self, canvas) -> None:
         """Draw watermark image centered on the page."""
@@ -295,12 +370,18 @@ class PDFService:
         if 'bullets' in content and isinstance(content['bullets'], list):
             bullet_items = []
             for bullet in content['bullets']:
-                bullet_items.append(ListItem(
-                    Paragraph(str(bullet), self.styles['BulletPoint']),
-                    leftIndent=20
-                ))
-            elements.append(ListFlowable(bullet_items, bulletType='bullet'))
-            elements.append(Spacer(1, 0.2 * inch))
+                parsed = self._try_parse_json(bullet)
+                candidate = parsed if parsed is not None else bullet
+                if isinstance(candidate, (dict, list)):
+                    self._add_complex_bullet(elements, candidate)
+                else:
+                    bullet_items.append(ListItem(
+                        Paragraph(str(candidate), self.styles['BulletPoint']),
+                        leftIndent=20
+                    ))
+            if bullet_items:
+                elements.append(ListFlowable(bullet_items, bulletType='bullet'))
+                elements.append(Spacer(1, 0.2 * inch))
 
         # Add findings if present
         if 'findings' in content and isinstance(content['findings'], list):

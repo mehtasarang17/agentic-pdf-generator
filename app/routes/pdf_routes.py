@@ -2,6 +2,7 @@
 
 import logging
 import os
+import json
 from pathlib import Path
 
 from flask import Blueprint, request, jsonify, send_file
@@ -14,6 +15,60 @@ from app.services.database_service import DatabaseService
 logger = logging.getLogger(__name__)
 
 pdf_bp = Blueprint('pdf', __name__)
+
+def _normalize_section_value(value):
+    """Normalize a raw section value into the expected schema."""
+    if isinstance(value, dict) and 'type' in value and 'content' in value:
+        section_type = value.get('type') if value.get('type') in ('analytics', 'descriptive') else 'descriptive'
+        content = value.get('content') if isinstance(value.get('content'), dict) else {'value': value.get('content')}
+        return {'type': section_type, 'content': content}
+
+    if isinstance(value, dict):
+        if value and all(isinstance(v, (int, float)) for v in value.values()):
+            return {'type': 'analytics', 'content': value}
+
+        bullets = []
+        for key, item in value.items():
+            if isinstance(item, (str, int, float, bool)) or item is None:
+                bullets.append(f"{key}: {item}")
+            elif isinstance(item, list):
+                if all(isinstance(v, (str, int, float, bool)) or v is None for v in item):
+                    bullets.append(f"{key}: {', '.join(str(v) for v in item)}")
+                else:
+                    bullets.append(f"{key}: {json.dumps(item, ensure_ascii=True)}")
+            else:
+                bullets.append(f"{key}: {json.dumps(item, ensure_ascii=True)}")
+
+        content = {'bullets': bullets} if bullets else {'text': [json.dumps(value, ensure_ascii=True)]}
+        return {'type': 'descriptive', 'content': content}
+
+    if isinstance(value, list):
+        bullets = []
+        for item in value:
+            if isinstance(item, (str, int, float, bool)) or item is None:
+                bullets.append(str(item))
+            else:
+                bullets.append(json.dumps(item, ensure_ascii=True))
+        return {'type': 'descriptive', 'content': {'bullets': bullets}}
+
+    return {'type': 'descriptive', 'content': {'text': [str(value)]}}
+
+
+def _normalize_input_payload(payload):
+    """Convert raw input into the expected {data: {section: {type, content}}} shape."""
+    if not isinstance(payload, dict):
+        return {'data': {'input': _normalize_section_value(payload)}}
+
+    if isinstance(payload.get('data'), dict):
+        data = payload['data']
+    else:
+        data = {k: v for k, v in payload.items() if k != 'client_name'}
+
+    normalized = {key: _normalize_section_value(value) for key, value in data.items()}
+    result = {'data': normalized}
+    if 'client_name' in payload:
+        result['client_name'] = payload.get('client_name')
+    return result
 
 
 @pdf_bp.route('/generate-pdf', methods=['POST'])
@@ -43,6 +98,9 @@ def generate_pdf():
                 'status': 'error',
                 'message': 'No JSON data provided'
             }), 400
+
+        # Normalize input so arrays/values do not fail schema validation.
+        input_data = _normalize_input_payload(input_data)
 
         client_name = input_data.get('client_name')
         display_client_name = client_name if client_name else 'client_name_not_specified'

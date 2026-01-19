@@ -106,8 +106,11 @@ class ContentBuilderAgent(BaseAgent):
             List of text paragraphs
         """
         text_items = []
+        skip_keys = {'bullets', 'points', 'items', 'list', 'findings', 'data'}
 
         for key, value in content.items():
+            if key in skip_keys:
+                continue
             if isinstance(value, str):
                 text_items.append(value)
             elif isinstance(value, list):
