@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  agentic-pdf-generator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agentic_pdf_generator
+    ports:
+      - "8500:8500"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      - FLASK_ENV=${FLASK_ENV:-production}
+      - FLASK_DEBUG=${FLASK_DEBUG:-0}
+      - FLASK_HOST=0.0.0.0
+      - FLASK_PORT=8500
+      - PDF_OUTPUT_DIR=generated_pdfs
+      - MIN_PAGES=7
+      - MAX_PAGES=100
+      - DATABASE_URL=postgresql://pdfuser:pdfpassword@postgres:5432/pdfgenerator
+    volumes:
+      - ./generated_pdfs:/app/generated_pdfs
+      - ./app/assets:/app/app/assets
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8500/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: pdf_postgres
+    environment:
+      - POSTGRES_USER=pdfuser
+      - POSTGRES_PASSWORD=pdfpassword
+      - POSTGRES_DB=pdfgenerator
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pdfuser -d pdfgenerator"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  generated_pdfs:
+  postgres_data:

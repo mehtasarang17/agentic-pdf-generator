@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agentic PDF Generator</title>
+    <style>
+        :root {
+            --primary: #1a365d;
+            --primary-light: #2c5282;
+            --accent: #4299e1;
+            --success: #48bb78;
+            --warning: #ed8936;
+            --danger: #f56565;
+            --bg: #f7fafc;
+            --card-bg: #ffffff;
+            --text: #2d3748;
+            --text-light: #718096;
+            --border: #e2e8f0;
+            --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .header {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+            color: white;
+            padding: 2rem;
+            text-align: center;
+            box-shadow: var(--shadow-lg);
+        }
+
+        .header h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 1rem;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2rem;
+        }
+
+        @media (max-width: 900px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .card {
+            background: var(--card-bg);
+            border-radius: 12px;
+            box-shadow: var(--shadow);
+            padding: 1.5rem;
+            transition: box-shadow 0.3s ease;
+        }
+
+        .card:hover {
+            box-shadow: var(--shadow-lg);
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1.5rem;
+            padding-bottom: 1rem;
+            border-bottom: 2px solid var(--border);
+        }
+
+        .card-header h2 {
+            font-size: 1.25rem;
+            color: var(--primary);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .icon {
+            width: 24px;
+            height: 24px;
+        }
+
+        .form-group {
+            margin-bottom: 1.25rem;
+        }
+
+        label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: var(--text);
+        }
+
+        input[type="text"],
+        textarea,
+        select {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            border: 2px solid var(--border);
+            border-radius: 8px;
+            font-size: 1rem;
+            transition: border-color 0.2s, box-shadow 0.2s;
+            font-family: inherit;
+        }
+
+        input[type="text"]:focus,
+        textarea:focus,
+        select:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(66, 153, 225, 0.2);
+        }
+
+        textarea {
+            min-height: 200px;
+            resize: vertical;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 0.875rem;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-decoration: none;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-lg);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-secondary {
+            background: var(--border);
+            color: var(--text);
+        }
+
+        .btn-secondary:hover {
+            background: #cbd5e0;
+        }
+
+        .btn-sm {
+            padding: 0.5rem 1rem;
+            font-size: 0.875rem;
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #e53e3e;
+        }
+
+        .btn-success {
+            background: var(--success);
+            color: white;
+        }
+
+        .template-btns {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            margin-bottom: 1rem;
+        }
+
+        .status-bar {
+            margin-top: 1.5rem;
+            padding: 1rem;
+            border-radius: 8px;
+            display: none;
+        }
+
+        .status-bar.show {
+            display: block;
+        }
+
+        .status-bar.loading {
+            background: #ebf8ff;
+            border: 1px solid var(--accent);
+            color: var(--primary-light);
+        }
+
+        .status-bar.success {
+            background: #f0fff4;
+            border: 1px solid var(--success);
+            color: #276749;
+        }
+
+        .status-bar.error {
+            background: #fff5f5;
+            border: 1px solid var(--danger);
+            color: #c53030;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(66, 153, 225, 0.3);
+            border-radius: 50%;
+            border-top-color: var(--accent);
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 0.5rem;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .pdf-list {
+            list-style: none;
+        }
+
+        .pdf-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 1rem;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-bottom: 0.75rem;
+            transition: all 0.2s;
+        }
+
+        .pdf-item:hover {
+            border-color: var(--accent);
+            background: #f8faff;
+        }
+
+        .pdf-info {
+            flex: 1;
+        }
+
+        .pdf-name {
+            font-weight: 600;
+            color: var(--primary);
+            margin-bottom: 0.25rem;
+        }
+
+        .pdf-meta {
+            font-size: 0.875rem;
+            color: var(--text-light);
+        }
+
+        .pdf-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 3rem 1rem;
+            color: var(--text-light);
+        }
+
+        .empty-state svg {
+            width: 64px;
+            height: 64px;
+            margin-bottom: 1rem;
+            opacity: 0.5;
+        }
+
+        .agent-flow {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--border);
+        }
+
+        .agent-step {
+            padding: 0.5rem 0.75rem;
+            background: var(--border);
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--text-light);
+            transition: all 0.3s;
+        }
+
+        .agent-step.active {
+            background: var(--accent);
+            color: white;
+            animation: pulse 1s infinite;
+        }
+
+        .agent-step.done {
+            background: var(--success);
+            color: white;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        .refresh-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            color: var(--text-light);
+            padding: 0.5rem;
+            border-radius: 8px;
+            transition: all 0.2s;
+        }
+
+        .refresh-btn:hover {
+            background: var(--border);
+            color: var(--primary);
+        }
+
+        .result-preview {
+            margin-top: 1rem;
+            padding: 1rem;
+            background: #f8faff;
+            border-radius: 8px;
+            border: 1px solid var(--accent);
+        }
+
+        .result-preview h4 {
+            color: var(--primary);
+            margin-bottom: 0.5rem;
+        }
+
+        .health-indicator {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+        }
+
+        .health-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--text-light);
+        }
+
+        .health-dot.healthy {
+            background: var(--success);
+            animation: pulse-dot 2s infinite;
+        }
+
+        .health-dot.unhealthy {
+            background: var(--danger);
+        }
+
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .footer {
+            text-align: center;
+            padding: 2rem;
+            color: var(--text-light);
+            font-size: 0.875rem;
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <h1>Agentic PDF Generator</h1>
+        <p>Multi-agent system for intelligent PDF report generation</p>
+    </header>
+
+    <div class="container">
+        <div class="grid">
+            <!-- Generate PDF Card -->
+            <div class="card">
+                <div class="card-header">
+                    <h2>
+                        <svg class="icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                        </svg>
+                        Generate PDF
+                    </h2>
+                    <div class="health-indicator">
+                        <span class="health-dot" id="healthDot"></span>
+                        <span id="healthStatus">Checking...</span>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Quick Templates</label>
+                    <div class="template-btns">
+                        <button class="btn btn-secondary btn-sm" onclick="loadTemplate('security')">Security Report</button>
+                        <button class="btn btn-secondary btn-sm" onclick="loadTemplate('sales')">Sales Dashboard</button>
+                        <button class="btn btn-secondary btn-sm" onclick="loadTemplate('hr')">HR Analytics</button>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="jsonData">Report Data (JSON)</label>
+                    <textarea id="jsonData" placeholder="Enter your JSON data here..."></textarea>
+                </div>
+
+                <button class="btn btn-primary" id="generateBtn" onclick="generatePDF()">
+                    <svg class="icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                    </svg>
+                    Generate PDF
+                </button>
+
+                <div class="status-bar" id="statusBar">
+                    <span id="statusMessage"></span>
+                </div>
+
+                <div class="agent-flow" id="agentFlow" style="display: none;">
+                    <span class="agent-step" data-agent="orchestrator">Orchestrator</span>
+                    <span class="agent-step" data-agent="analyser">Analyser</span>
+                    <span class="agent-step" data-agent="planner">Planner</span>
+                    <span class="agent-step" data-agent="writer">Writer</span>
+                    <span class="agent-step" data-agent="visualizer">Visualizer</span>
+                    <span class="agent-step" data-agent="builder">Builder</span>
+                </div>
+
+                <div class="result-preview" id="resultPreview" style="display: none;">
+                    <h4>Generated PDF</h4>
+                    <p id="resultInfo"></p>
+                    <div style="margin-top: 1rem;">
+                        <a id="downloadLink" class="btn btn-success btn-sm" target="_blank">
+                            <svg class="icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:16px;height:16px;">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                            </svg>
+                            Download PDF
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- PDF List Card -->
+            <div class="card">
+                <div class="card-header">
+                    <h2>
+                        <svg class="icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path>
+                        </svg>
+                        Generated PDFs
+                    </h2>
+                    <button class="refresh-btn" onclick="loadPDFs()" title="Refresh list">
+                        <svg class="icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                        </svg>
+                    </button>
+                </div>
+
+                <ul class="pdf-list" id="pdfList">
+                    <li class="empty-state">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                        </svg>
+                        <p>No PDFs generated yet</p>
+                        <p style="font-size: 0.875rem;">Generate your first PDF using the form</p>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <footer class="footer">
+        <p>Powered by LangGraph, AWS Bedrock & ReportLab</p>
+    </footer>
+
+    <script>
+        const API_BASE = 'http://localhost:8500/api/v1';
+
+        // Templates
+        const templates = {
+            security: {
+                "executive_summary": {
+                    "type": "descriptive",
+                    "content": {
+                        "overview": "Comprehensive security assessment conducted for Q4 2024",
+                        "scope": "Full infrastructure including cloud services, on-premise systems, and endpoints",
+                        "methodology": "NIST Cybersecurity Framework and OWASP Top 10"
+                    }
+                },
+                "vulnerability_metrics": {
+                    "type": "analytics",
+                    "content": {
+                        "Critical": 3,
+                        "High": 12,
+                        "Medium": 45,
+                        "Low": 89,
+                        "Informational": 156
+                    }
+                },
+                "threat_landscape": {
+                    "type": "analytics",
+                    "content": {
+                        "Phishing Attempts": 234,
+                        "Malware Blocked": 56,
+                        "Unauthorized Access": 12,
+                        "DDoS Attacks": 3,
+                        "Data Exfiltration": 1
+                    }
+                },
+                "recommendations": {
+                    "type": "descriptive",
+                    "content": {
+                        "priority_1": "Implement multi-factor authentication across all systems",
+                        "priority_2": "Update firewall rules and network segmentation",
+                        "priority_3": "Conduct employee security awareness training",
+                        "priority_4": "Deploy endpoint detection and response (EDR) solution"
+                    }
+                }
+            },
+            sales: {
+                "quarterly_overview": {
+                    "type": "descriptive",
+                    "content": {
+                        "period": "Q4 2024 Sales Performance",
+                        "highlights": "Record-breaking quarter with 23% growth YoY",
+                        "key_wins": "Secured 5 enterprise clients with total contract value of $2.5M"
+                    }
+                },
+                "revenue_by_region": {
+                    "type": "analytics",
+                    "content": {
+                        "North America": 1250000,
+                        "Europe": 890000,
+                        "Asia Pacific": 560000,
+                        "Latin America": 230000,
+                        "Middle East": 120000
+                    }
+                },
+                "product_performance": {
+                    "type": "analytics",
+                    "content": {
+                        "Enterprise Suite": 45,
+                        "Professional Plan": 32,
+                        "Starter Pack": 18,
+                        "Add-ons": 5
+                    }
+                },
+                "sales_pipeline": {
+                    "type": "analytics",
+                    "content": {
+                        "Qualified Leads": 156,
+                        "Proposals Sent": 89,
+                        "Negotiations": 34,
+                        "Closed Won": 28,
+                        "Closed Lost": 12
+                    }
+                }
+            },
+            hr: {
+                "workforce_summary": {
+                    "type": "descriptive",
+                    "content": {
+                        "total_employees": "Total workforce of 450 employees across 8 offices",
+                        "new_hires": "45 new employees onboarded this quarter",
+                        "retention": "Employee retention rate at 94%"
+                    }
+                },
+                "department_distribution": {
+                    "type": "analytics",
+                    "content": {
+                        "Engineering": 180,
+                        "Sales": 85,
+                        "Marketing": 45,
+                        "Operations": 60,
+                        "HR": 25,
+                        "Finance": 35,
+                        "Executive": 20
+                    }
+                },
+                "satisfaction_scores": {
+                    "type": "analytics",
+                    "content": {
+                        "Work-Life Balance": 4.2,
+                        "Career Growth": 3.8,
+                        "Compensation": 3.9,
+                        "Management": 4.1,
+                        "Culture": 4.5
+                    }
+                },
+                "training_metrics": {
+                    "type": "analytics",
+                    "content": {
+                        "Completed": 89,
+                        "In Progress": 45,
+                        "Not Started": 12,
+                        "Overdue": 4
+                    }
+                }
+            }
+        };
+
+        // Load template
+        function loadTemplate(name) {
+            const data = templates[name];
+            document.getElementById('jsonData').value = JSON.stringify(data, null, 2);
+        }
+
+        // Check health
+        async function checkHealth() {
+            const dot = document.getElementById('healthDot');
+            const status = document.getElementById('healthStatus');
+            try {
+                const response = await fetch('http://localhost:8500/health');
+                const data = await response.json();
+                if (data.status === 'healthy') {
+                    dot.classList.add('healthy');
+                    dot.classList.remove('unhealthy');
+                    status.textContent = 'API Online';
+                } else {
+                    throw new Error('Unhealthy');
+                }
+            } catch (e) {
+                dot.classList.add('unhealthy');
+                dot.classList.remove('healthy');
+                status.textContent = 'API Offline';
+            }
+        }
+
+        // Show status
+        function showStatus(message, type) {
+            const bar = document.getElementById('statusBar');
+            const msg = document.getElementById('statusMessage');
+            bar.className = 'status-bar show ' + type;
+            msg.innerHTML = type === 'loading' ? '<span class="spinner"></span>' + message : message;
+        }
+
+        // Hide status
+        function hideStatus() {
+            document.getElementById('statusBar').classList.remove('show');
+        }
+
+        // Simulate agent progress
+        function simulateAgentProgress() {
+            const flow = document.getElementById('agentFlow');
+            flow.style.display = 'flex';
+            const agents = ['orchestrator', 'analyser', 'planner', 'writer', 'visualizer', 'builder'];
+            let current = 0;
+
+            const interval = setInterval(() => {
+                if (current > 0) {
+                    document.querySelector(`[data-agent="${agents[current-1]}"]`).classList.remove('active');
+                    document.querySelector(`[data-agent="${agents[current-1]}"]`).classList.add('done');
+                }
+                if (current < agents.length) {
+                    document.querySelector(`[data-agent="${agents[current]}"]`).classList.add('active');
+                    current++;
+                } else {
+                    clearInterval(interval);
+                }
+            }, 800);
+
+            return interval;
+        }
+
+        // Reset agent flow
+        function resetAgentFlow() {
+            document.querySelectorAll('.agent-step').forEach(step => {
+                step.classList.remove('active', 'done');
+            });
+        }
+
+        // Generate PDF
+        async function generatePDF() {
+            const jsonData = document.getElementById('jsonData').value.trim();
+            const btn = document.getElementById('generateBtn');
+
+            if (!jsonData) {
+                showStatus('Please enter JSON data or select a template', 'error');
+                return;
+            }
+
+            let data;
+            try {
+                data = JSON.parse(jsonData);
+            } catch (e) {
+                showStatus('Invalid JSON: ' + e.message, 'error');
+                return;
+            }
+
+            const payload = (data && typeof data === 'object' && data.data)
+                ? {
+                    ...(data.client_name ? { client_name: data.client_name } : {}),
+                    data: data.data
+                }
+                : { data };
+
+            if (!payload.data || (typeof payload.data === 'object' && Object.keys(payload.data).length === 0)) {
+                showStatus('JSON must include a non-empty data object', 'error');
+                return;
+            }
+
+            btn.disabled = true;
+            showStatus('Generating PDF with AI agents...', 'loading');
+            resetAgentFlow();
+            const progressInterval = simulateAgentProgress();
+            document.getElementById('resultPreview').style.display = 'none';
+
+            try {
+                const response = await fetch(`${API_BASE}/generate-pdf`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                clearInterval(progressInterval);
+                document.querySelectorAll('.agent-step').forEach(step => {
+                    step.classList.remove('active');
+                    step.classList.add('done');
+                });
+
+                const result = await response.json();
+
+                if (response.ok && result.status === 'success') {
+                    showStatus('PDF generated successfully!', 'success');
+
+                    const preview = document.getElementById('resultPreview');
+                    const info = document.getElementById('resultInfo');
+                    const link = document.getElementById('downloadLink');
+
+                    info.innerHTML = `<strong>${result.metadata?.title || 'Report'}</strong><br>
+                        Pages: ${result.metadata?.pages || 'N/A'} |
+                        Sections: ${result.metadata?.sections?.length || 0}`;
+                    link.href = `http://localhost:8500${result.pdf_url}`;
+                    preview.style.display = 'block';
+
+                    loadPDFs();
+                } else {
+                    showStatus('Error: ' + (result.error || 'Unknown error'), 'error');
+                }
+            } catch (e) {
+                clearInterval(progressInterval);
+                showStatus('Failed to connect to API. Is the server running?', 'error');
+            }
+
+            btn.disabled = false;
+        }
+
+        // Load PDFs
+        async function loadPDFs() {
+            const list = document.getElementById('pdfList');
+
+            try {
+                const response = await fetch(`${API_BASE}/pdfs`);
+                const data = await response.json();
+                const pdfs = data.pdfs || [];
+
+                if (pdfs.length === 0) {
+                    list.innerHTML = `
+                        <li class="empty-state">
+                            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                            <p>No PDFs generated yet</p>
+                            <p style="font-size: 0.875rem;">Generate your first PDF using the form</p>
+                        </li>
+                    `;
+                    return;
+                }
+
+                list.innerHTML = pdfs.map(pdf => `
+                    <li class="pdf-item">
+                        <div class="pdf-info">
+                            <div class="pdf-name">${pdf.title || pdf.filename}</div>
+                            <div class="pdf-meta">
+                                ${pdf.client_name || 'client_name_not_specified'} • ${formatSize(pdf.size)} • ${pdf.pages || '?'} pages • ${formatDate(pdf.created_at)}
+                            </div>
+                        </div>
+                        <div class="pdf-actions">
+                            <a href="http://localhost:8500${pdf.download_url}" target="_blank" class="btn btn-success btn-sm">
+                                Download
+                            </a>
+                            <button class="btn btn-danger btn-sm" onclick="deletePDF('${pdf.id}')">
+                                Delete
+                            </button>
+                        </div>
+                    </li>
+                `).join('');
+            } catch (e) {
+                list.innerHTML = `
+                    <li class="empty-state">
+                        <p>Could not load PDFs</p>
+                        <p style="font-size: 0.875rem;">Make sure the API server is running</p>
+                    </li>
+                `;
+            }
+        }
+
+        // Delete PDF
+        async function deletePDF(id) {
+            if (!confirm('Are you sure you want to delete this PDF?')) return;
+
+            try {
+                await fetch(`${API_BASE}/delete/${id}`, { method: 'DELETE' });
+                loadPDFs();
+            } catch (e) {
+                alert('Failed to delete PDF');
+            }
+        }
+
+        // Format file size
+        function formatSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        }
+
+        // Format date
+        function formatDate(dateStr) {
+            const date = new Date(dateStr);
+            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+        }
+
+        // Initialize
+        loadTemplate('security');
+        checkHealth();
+        loadPDFs();
+        setInterval(checkHealth, 30000);
+    </script>
+</body>
+</html>
