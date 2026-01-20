@@ -5,6 +5,8 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
+ENV GUNICORN_WORKERS=2
+ENV GUNICORN_TIMEOUT=240
 
 # Set working directory
 WORKDIR /app
@@ -37,4 +39,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8500/health || exit 1
 
 # Run with gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:8500", "--workers", "2", "--timeout", "120", "app.main:app"]
+CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:8500 --workers ${GUNICORN_WORKERS} --timeout ${GUNICORN_TIMEOUT} app.main:app"]

@@ -116,6 +116,25 @@ class TestInputAnalyser:
         assert result['is_valid'] is True
         assert result['has_analytics'] is True
 
+    def test_unstructured_section_content(self):
+        """Test handling of sections without type/content schema."""
+        state = create_initial_state({
+            "data": {
+                "results": {
+                    "status": "ok",
+                    "count": 12,
+                    "items": [{"id": 1}, {"id": 2}]
+                }
+            }
+        })
+        agent = InputAnalyserAgent()
+
+        result = agent.process(state)
+
+        assert result['is_valid'] is True
+        assert result['sections_identified'][0]['content']['status'] == "ok"
+        assert result['sections_identified'][0]['content']['count'] == 12
+
 
 class TestChartService:
     """Tests for Chart Service."""
@@ -231,7 +250,8 @@ class TestAgentState:
             'raw_input', 'client_name', 'is_valid', 'validation_errors',
             'sections_identified', 'has_analytics', 'has_descriptive',
             'pdf_title', 'section_plans', 'total_pages',
-            'generated_descriptions', 'section_summaries', 'charts',
+            'generated_descriptions', 'generated_bullets', 'generated_findings',
+            'section_summaries', 'charts',
             'sections_content', 'pdf_result', 'error'
         ]
 

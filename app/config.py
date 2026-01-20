@@ -26,6 +26,51 @@ class Config:
     # OpenAI settings
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
     OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    LLM_INPUT_TOKEN_BUDGET = int(os.getenv("LLM_INPUT_TOKEN_BUDGET", "120000"))
+    LLM_CHUNK_TOKEN_BUDGET = int(os.getenv("LLM_CHUNK_TOKEN_BUDGET", "20000"))
+    LLM_MERGE_TOKEN_BUDGET = int(os.getenv("LLM_MERGE_TOKEN_BUDGET", "8000"))
+    LLM_DIGEST_TOKEN_BUDGET = int(os.getenv("LLM_DIGEST_TOKEN_BUDGET", "8000"))
+    LLM_MAX_CHUNK_CALLS = int(os.getenv("LLM_MAX_CHUNK_CALLS", "40"))
+    LLM_STRUCTURED_BASE_PARAGRAPHS = os.getenv(
+        "LLM_STRUCTURED_BASE_PARAGRAPHS",
+        "2-3"
+    )
+    LLM_STRUCTURED_BASE_BULLETS = os.getenv(
+        "LLM_STRUCTURED_BASE_BULLETS",
+        "3-7"
+    )
+    LLM_STRUCTURED_BASE_FINDINGS = os.getenv(
+        "LLM_STRUCTURED_BASE_FINDINGS",
+        "2-5"
+    )
+    LLM_STRUCTURED_DETAIL_PARAGRAPHS = os.getenv(
+        "LLM_STRUCTURED_DETAIL_PARAGRAPHS",
+        "4-6"
+    )
+    LLM_STRUCTURED_DETAIL_BULLETS = os.getenv(
+        "LLM_STRUCTURED_DETAIL_BULLETS",
+        "7-12"
+    )
+    LLM_STRUCTURED_DETAIL_FINDINGS = os.getenv(
+        "LLM_STRUCTURED_DETAIL_FINDINGS",
+        "4-7"
+    )
+    LLM_STRUCTURED_MAX_TOKENS = int(os.getenv("LLM_STRUCTURED_MAX_TOKENS", "1500"))
+    LLM_STRUCTURED_MAX_TOKENS_DETAIL = int(
+        os.getenv("LLM_STRUCTURED_MAX_TOKENS_DETAIL", "2200")
+    )
+
+    ANALYTICS_NUMERIC_RATIO = float(os.getenv("ANALYTICS_NUMERIC_RATIO", "0.3"))
+    ANALYTICS_MIN_NUMERIC_VALUES = int(os.getenv("ANALYTICS_MIN_NUMERIC_VALUES", "4"))
+    ANALYTICS_SERIES_MIN_LENGTH = int(os.getenv("ANALYTICS_SERIES_MIN_LENGTH", "3"))
+    ANALYTICS_SAMPLE_LIMIT = int(os.getenv("ANALYTICS_SAMPLE_LIMIT", "5000"))
+
+    VISUALIZER_MAX_CATEGORIES = int(os.getenv("VISUALIZER_MAX_CATEGORIES", "12"))
+    VISUALIZER_MAX_SERIES_ITEMS = int(os.getenv("VISUALIZER_MAX_SERIES_ITEMS", "30"))
+    LLM_TOKEN_ESTIMATE_CHARS_PER_TOKEN = float(
+        os.getenv("LLM_TOKEN_ESTIMATE_CHARS_PER_TOKEN", "4.0")
+    )
+    LLM_MAX_FIELD_CHARS = int(os.getenv("LLM_MAX_FIELD_CHARS", "8000"))
 
     # PDF settings
     BASE_DIR = Path(__file__).parent.parent

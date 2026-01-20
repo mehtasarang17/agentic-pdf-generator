@@ -34,7 +34,10 @@ class AgentState(TypedDict):
 
     # Writer results
     generated_descriptions: Dict[str, str]
+    generated_bullets: Dict[str, List[str]]
+    generated_findings: Dict[str, List[str]]
     section_summaries: Dict[str, str]
+    section_parts: Dict[str, List[Dict[str, Any]]]
 
     # Visualizer results
     charts: Dict[str, List[bytes]]  # section_name -> list of chart images
@@ -61,7 +64,10 @@ def create_initial_state(input_data: Dict[str, Any]) -> AgentState:
         section_plans=[],
         total_pages=0,
         generated_descriptions={},
+        generated_bullets={},
+        generated_findings={},
         section_summaries={},
+        section_parts={},
         charts={},
         sections_content=[],
         pdf_result=None,

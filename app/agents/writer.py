@@ -2,10 +2,12 @@
 
 import json
 import logging
+import re
 from typing import Dict, Any, List
 
 from app.agents.base import BaseAgent
 from app.agents.state import AgentState
+from app.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +17,7 @@ class WriterAgent(BaseAgent):
 
     def __init__(self):
         super().__init__("Writer")
+        self._token_encoder = None
 
     def process(self, state: AgentState) -> AgentState:
         """Generate descriptions for descriptive sections.
@@ -30,29 +33,840 @@ class WriterAgent(BaseAgent):
 
         section_plans = state.get('section_plans', [])
         generated_descriptions = {}
+        generated_bullets = {}
+        generated_findings = {}
         section_summaries = {}
+        section_parts = {}
 
         for plan in section_plans:
             section_name = plan['name']
             section_type = plan['type']
             content = plan['content']
 
-            # Generate description for all sections
-            description = self._generate_description(section_name, content, section_type)
-            generated_descriptions[section_name] = description
-
-            # Generate summary
-            summary = self._generate_summary(section_name, content)
-            section_summaries[section_name] = summary
+            structured = self._generate_structured_content(
+                section_name,
+                content,
+                section_type
+            )
+            generated_descriptions[section_name] = structured['description']
+            generated_bullets[section_name] = structured['bullets']
+            generated_findings[section_name] = structured['findings']
+            section_summaries[section_name] = structured['summary']
+            parts = structured.get('parts')
+            if parts:
+                section_parts[section_name] = parts
 
             self.logger.debug(f"Generated content for section: {section_name}")
 
         state['generated_descriptions'] = generated_descriptions
+        state['generated_bullets'] = generated_bullets
+        state['generated_findings'] = generated_findings
         state['section_summaries'] = section_summaries
+        if section_parts:
+            state['section_parts'] = section_parts
 
         self.logger.info(f"Generated descriptions for {len(generated_descriptions)} sections")
 
         return state
+
+    def _generate_structured_content(
+        self,
+        section_name: str,
+        content: Dict[str, Any],
+        section_type: str
+    ) -> Dict[str, Any]:
+        """Generate structured narrative content for a section."""
+        content_str = json.dumps(content, indent=2, ensure_ascii=True)
+        system_prompt = self._structured_system_prompt()
+        base_spec = self._response_spec(detailed=False)
+        prompt = self._structured_prompt(
+            section_name,
+            content_str,
+            section_type,
+            base_spec
+        )
+
+        if self._estimate_prompt_tokens(prompt, system_prompt) <= config.LLM_INPUT_TOKEN_BUDGET:
+            return self._invoke_structured_response(
+                prompt,
+                system_prompt,
+                section_name,
+                max_tokens=base_spec["max_tokens"]
+            )
+
+        self.logger.info(
+            "Section '%s' exceeds token budget (%s); chunking input.",
+            section_name,
+            config.LLM_INPUT_TOKEN_BUDGET
+        )
+
+        chunks = self._chunk_content(
+            section_name,
+            section_type,
+            content,
+            config.LLM_CHUNK_TOKEN_BUDGET
+        )
+        self.logger.info(
+            "Section '%s' split into %s chunk(s) for LLM generation.",
+            section_name,
+            len(chunks)
+        )
+
+        if not chunks:
+            return {
+                "description": f"This section covers {section_name}.",
+                "bullets": [],
+                "findings": [],
+                "summary": f"Summary of {section_name}."
+            }
+
+        detail_spec = self._response_spec(detailed=True)
+        if len(chunks) > config.LLM_MAX_CHUNK_CALLS:
+            self.logger.info(
+                "Chunk count %s exceeds limit %s; using digest summaries.",
+                len(chunks),
+                config.LLM_MAX_CHUNK_CALLS
+            )
+            digests = [self._build_chunk_digest(chunk) for chunk in chunks]
+            digest_batches = self._batch_chunk_digests(
+                section_name,
+                section_type,
+                digests,
+                system_prompt,
+                detail_spec
+            )
+            self.logger.info(
+                "Digest summaries packed into %s batch(es).",
+                len(digest_batches)
+            )
+            chunk_outputs = []
+            for idx, batch in enumerate(digest_batches, start=1):
+                digest_prompt = self._digest_prompt(
+                    section_name,
+                    section_type,
+                    batch,
+                    detail_spec
+                )
+                self.logger.debug(
+                    "Processing digest batch %s/%s for section '%s'.",
+                    idx,
+                    len(digest_batches),
+                    section_name
+                )
+                chunk_outputs.append(
+                    self._invoke_structured_response(
+                        digest_prompt,
+                        system_prompt,
+                        section_name,
+                        max_tokens=detail_spec["max_tokens"]
+                    )
+                )
+        else:
+            chunk_outputs = []
+            for idx, chunk in enumerate(chunks, start=1):
+                chunk_str = json.dumps(chunk, indent=2, ensure_ascii=True)
+                chunk_prompt = self._structured_prompt(
+                    section_name,
+                    chunk_str,
+                    section_type,
+                    detail_spec
+                )
+                self.logger.debug(
+                    "Processing chunk %s/%s for section '%s'.",
+                    idx,
+                    len(chunks),
+                    section_name
+                )
+                chunk_outputs.append(
+                    self._invoke_structured_response(
+                        chunk_prompt,
+                        system_prompt,
+                        section_name,
+                        max_tokens=detail_spec["max_tokens"]
+                    )
+                )
+
+        merged = self._merge_structured_outputs(
+            section_name,
+            section_type,
+            chunk_outputs,
+            system_prompt
+        )
+        if len(chunk_outputs) > 1:
+            merged['parts'] = chunk_outputs
+        return merged
+
+    def _structured_system_prompt(self) -> str:
+        return (
+            "You are a professional technical writer. "
+            "Respond only with valid JSON."
+        )
+
+    def _response_spec(self, detailed: bool) -> Dict[str, Any]:
+        if detailed:
+            return {
+                "paragraphs": config.LLM_STRUCTURED_DETAIL_PARAGRAPHS,
+                "bullets": config.LLM_STRUCTURED_DETAIL_BULLETS,
+                "findings": config.LLM_STRUCTURED_DETAIL_FINDINGS,
+                "max_tokens": config.LLM_STRUCTURED_MAX_TOKENS_DETAIL
+            }
+        return {
+            "paragraphs": config.LLM_STRUCTURED_BASE_PARAGRAPHS,
+            "bullets": config.LLM_STRUCTURED_BASE_BULLETS,
+            "findings": config.LLM_STRUCTURED_BASE_FINDINGS,
+            "max_tokens": config.LLM_STRUCTURED_MAX_TOKENS
+        }
+
+    def _structured_prompt(
+        self,
+        section_name: str,
+        content_str: str,
+        section_type: str,
+        response_spec: Dict[str, Any]
+    ) -> str:
+        paragraphs = response_spec["paragraphs"]
+        bullets = response_spec["bullets"]
+        findings = response_spec["findings"]
+        if section_type == 'analytics':
+            return f"""Create narrative content for a report section based on the data below.
+Return ONLY valid JSON with these keys:
+- description: {paragraphs} paragraphs in plain text (no markdown)
+- bullets: array of {bullets} concise bullet points (strings, no bullet symbols)
+- findings: array of {findings} key findings or risks (strings)
+- summary: single sentence
+
+Section Name: {section_name}
+Data:
+{content_str}
+
+Guidelines:
+- Explain trends, outliers, and notable values
+- Use precise numbers where helpful
+- Do not echo raw JSON paths
+- Keep language professional and clear"""
+
+        return f"""Create narrative content for a report section based on the content below.
+Return ONLY valid JSON with these keys:
+- description: {paragraphs} paragraphs in plain text (no markdown)
+- bullets: array of {bullets} concise bullet points (strings, no bullet symbols)
+- findings: array of {findings} key findings or implications (strings)
+- summary: single sentence
+
+Section Name: {section_name}
+Content:
+{content_str}
+
+Guidelines:
+- Explain the meaning of the data in business language
+- Highlight key entities, items, or risks
+- Avoid listing every field; focus on what matters
+- Do not echo raw JSON paths"""
+
+    def _invoke_structured_response(
+        self,
+        prompt: str,
+        system_prompt: str,
+        section_name: str,
+        max_tokens: int = config.LLM_STRUCTURED_MAX_TOKENS
+    ) -> Dict[str, Any]:
+        try:
+            response = self.invoke_llm(
+                prompt,
+                system_prompt=system_prompt,
+                max_tokens=max_tokens,
+                temperature=0.4
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to generate structured content: {e}")
+            return {
+                "description": f"This section covers {section_name}.",
+                "bullets": [],
+                "findings": [],
+                "summary": f"Summary of {section_name}."
+            }
+
+        parsed = self._parse_json_response(response)
+        if not parsed:
+            description = response.strip() or f"This section covers {section_name}."
+            return {
+                "description": description,
+                "bullets": [],
+                "findings": [],
+                "summary": self._summary_from_text(description, section_name)
+            }
+
+        description = str(parsed.get("description", "")).strip()
+        if not description:
+            description = f"This section covers {section_name}."
+
+        bullets = self._normalize_list(parsed.get("bullets"))
+        findings = self._normalize_list(parsed.get("findings"))
+        summary = str(parsed.get("summary", "")).strip()
+        if not summary:
+            summary = self._summary_from_text(description, section_name)
+
+        return {
+            "description": description,
+            "bullets": bullets,
+            "findings": findings,
+            "summary": summary
+        }
+
+    def _estimate_tokens(self, text: str) -> int:
+        if not text:
+            return 0
+        try:
+            if self._token_encoder is None:
+                import tiktoken
+
+                self._token_encoder = tiktoken.get_encoding("cl100k_base")
+            return len(self._token_encoder.encode(text))
+        except Exception:
+            chars_per_token = max(config.LLM_TOKEN_ESTIMATE_CHARS_PER_TOKEN, 1.0)
+            return int(len(text) / chars_per_token) + 1
+
+    def _estimate_prompt_tokens(self, prompt: str, system_prompt: str) -> int:
+        return self._estimate_tokens(prompt) + self._estimate_tokens(system_prompt or "")
+
+    def _fits_budget(
+        self,
+        section_name: str,
+        section_type: str,
+        content: Dict[str, Any],
+        budget: int
+    ) -> bool:
+        content_str = json.dumps(content, indent=2, ensure_ascii=True)
+        prompt = self._structured_prompt(
+            section_name,
+            content_str,
+            section_type,
+            self._response_spec(detailed=False)
+        )
+        tokens = self._estimate_prompt_tokens(prompt, self._structured_system_prompt())
+        return tokens <= budget
+
+    def _truncate_text(self, text: str, max_chars: int) -> str:
+        if not text or len(text) <= max_chars:
+            return text
+        return text[:max_chars].rstrip() + "... [truncated]"
+
+    def _split_list_item(
+        self,
+        section_name: str,
+        section_type: str,
+        key: str,
+        value: List[Any],
+        budget: int
+    ) -> List[Dict[str, Any]]:
+        chunks = []
+        current = []
+        for item in value:
+            candidate = current + [item]
+            if self._fits_budget(section_name, section_type, {key: candidate}, budget):
+                current = candidate
+                continue
+
+            if current:
+                chunks.append({key: current})
+                current = []
+
+            if self._fits_budget(section_name, section_type, {key: [item]}, budget):
+                current = [item]
+            else:
+                if isinstance(item, str):
+                    chunks.extend(
+                        {key: [segment]}
+                        for segment in self._split_text(item, config.LLM_MAX_FIELD_CHARS)
+                    )
+                else:
+                    truncated_item = self._truncate_text(
+                        json.dumps(item, ensure_ascii=True),
+                        config.LLM_MAX_FIELD_CHARS
+                    )
+                    chunks.append({key: [truncated_item]})
+
+        if current:
+            chunks.append({key: current})
+        return chunks or [{key: []}]
+
+    def _shrink_list_to_fit(
+        self,
+        section_name: str,
+        section_type: str,
+        key: str,
+        value: List[Any],
+        budget: int
+    ) -> List[Any]:
+        if not value:
+            return []
+        if self._fits_budget(section_name, section_type, {key: value}, budget):
+            return value
+        end = len(value)
+        while end > 1:
+            candidate = value[:end]
+            if self._fits_budget(section_name, section_type, {key: candidate}, budget):
+                return candidate
+            end = max(1, end // 2)
+        truncated_item = self._truncate_text(
+            json.dumps(value[0], ensure_ascii=True),
+            config.LLM_MAX_FIELD_CHARS
+        )
+        return [truncated_item]
+
+    def _shrink_dict_to_fit(
+        self,
+        section_name: str,
+        section_type: str,
+        key: str,
+        value: Dict[str, Any],
+        budget: int
+    ) -> Dict[str, Any]:
+        if not value:
+            return {}
+        if self._fits_budget(section_name, section_type, {key: value}, budget):
+            return value
+        keys = list(value.keys())
+        end = len(keys)
+        while end > 1:
+            candidate = {k: value[k] for k in keys[:end]}
+            if self._fits_budget(section_name, section_type, {key: candidate}, budget):
+                return candidate
+            end = max(1, end // 2)
+        first_key = keys[0]
+        truncated_value = self._truncate_text(
+            json.dumps(value[first_key], ensure_ascii=True),
+            config.LLM_MAX_FIELD_CHARS
+        )
+        return {first_key: truncated_value}
+
+    def _shrink_payload_to_fit(
+        self,
+        section_name: str,
+        section_type: str,
+        payload: Dict[str, Any],
+        budget: int
+    ) -> Dict[str, Any]:
+        if len(payload) != 1:
+            truncated = self._truncate_text(
+                json.dumps(payload, ensure_ascii=True),
+                config.LLM_MAX_FIELD_CHARS
+            )
+            return {"_truncated": truncated}
+        key = next(iter(payload))
+        value = payload[key]
+        if isinstance(value, str):
+            return {key: self._truncate_text(value, config.LLM_MAX_FIELD_CHARS)}
+        if isinstance(value, list):
+            return {
+                key: self._shrink_list_to_fit(
+                    section_name,
+                    section_type,
+                    key,
+                    value,
+                    budget
+                )
+            }
+        if isinstance(value, dict):
+            return {
+                key: self._shrink_dict_to_fit(
+                    section_name,
+                    section_type,
+                    key,
+                    value,
+                    budget
+                )
+            }
+        return payload
+
+    def _expand_item(
+        self,
+        section_name: str,
+        section_type: str,
+        key: str,
+        value: Any,
+        budget: int
+    ) -> List[Dict[str, Any]]:
+        if self._fits_budget(section_name, section_type, {key: value}, budget):
+            return [{key: value}]
+        if isinstance(value, list):
+            return self._split_list_item(
+                section_name,
+                section_type,
+                key,
+                value,
+                budget
+            )
+        if isinstance(value, dict):
+            subchunks = self._chunk_mapping_payloads(
+                section_name,
+                section_type,
+                value,
+                budget
+            )
+            if not subchunks:
+                return [{key: {}}]
+            return [{key: subchunk} for subchunk in subchunks]
+        if isinstance(value, str):
+            return [
+                {key: segment}
+                for segment in self._split_text(value, config.LLM_MAX_FIELD_CHARS)
+            ]
+        return [{key: value}]
+
+    def _pack_payloads(
+        self,
+        section_name: str,
+        section_type: str,
+        payloads: List[Dict[str, Any]],
+        budget: int
+    ) -> List[Dict[str, Any]]:
+        chunks = []
+        current: Dict[str, Any] = {}
+        for payload in payloads:
+            if any(key in current for key in payload):
+                if current:
+                    chunks.append(current)
+                    current = {}
+            candidate = {**current, **payload}
+            if self._fits_budget(section_name, section_type, candidate, budget):
+                current = candidate
+                continue
+            if current:
+                chunks.append(current)
+            if not self._fits_budget(section_name, section_type, payload, budget):
+                payload = self._shrink_payload_to_fit(
+                    section_name,
+                    section_type,
+                    payload,
+                    budget
+                )
+            chunks.append(payload)
+            current = {}
+        if current:
+            chunks.append(current)
+        return chunks
+
+    def _chunk_mapping_payloads(
+        self,
+        section_name: str,
+        section_type: str,
+        mapping: Dict[str, Any],
+        budget: int
+    ) -> List[Dict[str, Any]]:
+        payloads: List[Dict[str, Any]] = []
+        for key, value in mapping.items():
+            payloads.extend(
+                self._expand_item(
+                    section_name,
+                    section_type,
+                    key,
+                    value,
+                    budget
+                )
+            )
+        return self._pack_payloads(
+            section_name,
+            section_type,
+            payloads,
+            budget
+        )
+
+    def _chunk_content(
+        self,
+        section_name: str,
+        section_type: str,
+        content: Dict[str, Any],
+        budget: int
+    ) -> List[Dict[str, Any]]:
+        if not isinstance(content, dict):
+            content = {"value": content}
+        return self._chunk_mapping_payloads(
+            section_name,
+            section_type,
+            content,
+            budget
+        )
+
+    def _split_text(self, text: str, max_chars: int) -> List[str]:
+        if not text:
+            return [""]
+        chunks = []
+        start = 0
+        length = len(text)
+        while start < length:
+            chunks.append(text[start:start + max_chars])
+            start += max_chars
+        return chunks
+
+    def _digest_structured_output(self, output: Dict[str, Any]) -> Dict[str, Any]:
+        summary = self._truncate_text(
+            str(output.get("summary", "")).strip(),
+            500
+        )
+        bullets = [
+            self._truncate_text(str(item).strip(), 300)
+            for item in output.get("bullets", []) or []
+        ][:7]
+        findings = [
+            self._truncate_text(str(item).strip(), 300)
+            for item in output.get("findings", []) or []
+        ][:5]
+        return {
+            "summary": summary,
+            "bullets": bullets,
+            "findings": findings
+        }
+
+    def _merge_prompt(
+        self,
+        section_name: str,
+        section_type: str,
+        digests: List[Dict[str, Any]]
+    ) -> str:
+        content_str = json.dumps(digests, indent=2, ensure_ascii=True)
+        base_spec = self._response_spec(detailed=False)
+        paragraphs = base_spec["paragraphs"]
+        bullets = base_spec["bullets"]
+        findings = base_spec["findings"]
+        return f"""Combine the following chunk summaries into a single cohesive section.
+Return ONLY valid JSON with these keys:
+- description: {paragraphs} paragraphs in plain text (no markdown)
+- bullets: array of {bullets} concise bullet points (strings, no bullet symbols)
+- findings: array of {findings} key findings or risks (strings)
+- summary: single sentence
+
+Section Name: {section_name}
+Chunk Summaries:
+{content_str}
+
+Guidelines:
+- De-duplicate overlapping points
+- Keep language professional and clear
+- Do not invent data beyond the provided summaries"""
+
+    def _digest_prompt(
+        self,
+        section_name: str,
+        section_type: str,
+        digests: List[Dict[str, Any]],
+        response_spec: Dict[str, Any]
+    ) -> str:
+        content_str = json.dumps(digests, indent=2, ensure_ascii=True)
+        paragraphs = response_spec["paragraphs"]
+        bullets = response_spec["bullets"]
+        findings = response_spec["findings"]
+        return f"""Create narrative content for a report section based on the chunk digests below.
+Return ONLY valid JSON with these keys:
+- description: {paragraphs} paragraphs in plain text (no markdown)
+- bullets: array of {bullets} concise bullet points (strings, no bullet symbols)
+- findings: array of {findings} key findings or risks (strings)
+- summary: single sentence
+
+Section Name: {section_name}
+Chunk Digests:
+{content_str}
+
+Guidelines:
+- Use the digest counts and samples to describe the data
+- Highlight patterns or notable values where possible
+- Do not invent data beyond the provided digests"""
+
+    def _batch_chunk_digests(
+        self,
+        section_name: str,
+        section_type: str,
+        digests: List[Dict[str, Any]],
+        system_prompt: str,
+        response_spec: Dict[str, Any]
+    ) -> List[List[Dict[str, Any]]]:
+        batches: List[List[Dict[str, Any]]] = []
+        current: List[Dict[str, Any]] = []
+        for digest in digests:
+            candidate = current + [digest]
+            prompt = self._digest_prompt(
+                section_name,
+                section_type,
+                candidate,
+                response_spec
+            )
+            if self._estimate_prompt_tokens(prompt, system_prompt) <= config.LLM_DIGEST_TOKEN_BUDGET:
+                current = candidate
+            else:
+                if current:
+                    batches.append(current)
+                current = [digest]
+        if current:
+            batches.append(current)
+        return batches
+
+    def _build_chunk_digest(self, chunk: Dict[str, Any]) -> Dict[str, Any]:
+        digest = {}
+        for key, value in chunk.items():
+            digest[key] = self._summarize_value(value, max_depth=2)
+        return digest
+
+    def _summarize_value(self, value: Any, max_depth: int) -> Any:
+        if max_depth <= 0:
+            return self._truncate_text(
+                json.dumps(value, ensure_ascii=True),
+                300
+            )
+        if isinstance(value, dict):
+            keys = list(value.keys())
+            sample_keys = keys[:5]
+            sample = {
+                key: self._summarize_value(value[key], max_depth - 1)
+                for key in sample_keys
+            }
+            return {
+                "type": "dict",
+                "key_count": len(keys),
+                "sample_keys": sample_keys,
+                "sample": sample
+            }
+        if isinstance(value, list):
+            sample_items = value[:3]
+            return {
+                "type": "list",
+                "length": len(value),
+                "sample": [
+                    self._summarize_value(item, max_depth - 1)
+                    for item in sample_items
+                ]
+            }
+        if isinstance(value, str):
+            return self._truncate_text(value, 300)
+        return value
+
+    def _ensure_merge_fit(
+        self,
+        section_name: str,
+        section_type: str,
+        digest: Dict[str, Any],
+        system_prompt: str
+    ) -> Dict[str, Any]:
+        prompt = self._merge_prompt(section_name, section_type, [digest])
+        if self._estimate_prompt_tokens(prompt, system_prompt) <= config.LLM_MERGE_TOKEN_BUDGET:
+            return digest
+        summary = self._truncate_text(str(digest.get("summary", "")).strip(), 400)
+        return {"summary": summary}
+
+    def _batch_digests(
+        self,
+        section_name: str,
+        section_type: str,
+        digests: List[Dict[str, Any]],
+        system_prompt: str
+    ) -> List[List[Dict[str, Any]]]:
+        batches: List[List[Dict[str, Any]]] = []
+        current: List[Dict[str, Any]] = []
+        for digest in digests:
+            digest = self._ensure_merge_fit(
+                section_name,
+                section_type,
+                digest,
+                system_prompt
+            )
+            candidate = current + [digest]
+            prompt = self._merge_prompt(section_name, section_type, candidate)
+            if self._estimate_prompt_tokens(prompt, system_prompt) <= config.LLM_MERGE_TOKEN_BUDGET:
+                current = candidate
+            else:
+                if current:
+                    batches.append(current)
+                current = [digest]
+        if current:
+            batches.append(current)
+        return batches
+
+    def _merge_structured_outputs(
+        self,
+        section_name: str,
+        section_type: str,
+        outputs: List[Dict[str, Any]],
+        system_prompt: str
+    ) -> Dict[str, Any]:
+        if not outputs:
+            return {
+                "description": f"This section covers {section_name}.",
+                "bullets": [],
+                "findings": [],
+                "summary": f"Summary of {section_name}."
+            }
+        if len(outputs) == 1:
+            return outputs[0]
+
+        digests = [self._digest_structured_output(output) for output in outputs]
+        merged_outputs = outputs
+        while len(merged_outputs) > 1:
+            batches = self._batch_digests(
+                section_name,
+                section_type,
+                digests,
+                system_prompt
+            )
+            merged_outputs = []
+            for batch in batches:
+                prompt = self._merge_prompt(section_name, section_type, batch)
+                merged_outputs.append(
+                    self._invoke_structured_response(
+                        prompt,
+                        system_prompt,
+                        section_name
+                    )
+                )
+            digests = [
+                self._digest_structured_output(output)
+                for output in merged_outputs
+            ]
+
+        return merged_outputs[0]
+
+    def _parse_json_response(self, response: str) -> Dict[str, Any]:
+        """Parse a JSON object from an LLM response."""
+        if not response:
+            return {}
+        cleaned = response.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.strip("`").strip()
+            if cleaned.lower().startswith("json"):
+                cleaned = cleaned[4:].strip()
+
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            cleaned = cleaned[start:end + 1]
+
+        try:
+            parsed = json.loads(cleaned)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+
+    def _normalize_list(self, value: Any) -> List[str]:
+        """Normalize LLM list outputs into a list of strings."""
+        if not value:
+            return []
+        if isinstance(value, list):
+            cleaned = [str(item).strip() for item in value if str(item).strip()]
+            return cleaned
+        if isinstance(value, str):
+            lines = []
+            for line in value.splitlines():
+                cleaned = re.sub(r"^[^A-Za-z0-9]+", "", line).strip()
+                if cleaned:
+                    lines.append(cleaned)
+            return lines
+        return [str(value).strip()]
+
+    def _summary_from_text(self, text: str, fallback_name: str) -> str:
+        """Create a one-sentence summary from a description."""
+        if not text:
+            return f"Summary of {fallback_name}."
+        for separator in [". ", ".\n"]:
+            if separator in text:
+                return text.split(separator)[0].strip() + "."
+        return (text.strip().splitlines()[0] or f"Summary of {fallback_name}.").strip()
 
     def _generate_description(
         self,

@@ -1,7 +1,7 @@
 """Content Builder Agent - Assembles final PDF content."""
 
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from app.agents.base import BaseAgent
 from app.agents.state import AgentState
@@ -66,7 +66,10 @@ class ContentBuilderAgent(BaseAgent):
         """
         section_plans = state.get('section_plans', [])
         descriptions = state.get('generated_descriptions', {})
+        generated_bullets = state.get('generated_bullets', {})
+        generated_findings = state.get('generated_findings', {})
         summaries = state.get('section_summaries', {})
+        section_parts = state.get('section_parts', {})
 
         sections = []
 
@@ -80,11 +83,27 @@ class ContentBuilderAgent(BaseAgent):
                 'data': original_content if plan['type'] == 'analytics' else None,
             }
 
-            # Add text content for descriptive sections
-            if plan['type'] == 'descriptive':
-                content['text'] = self._extract_text_content(original_content)
-                content['bullets'] = self._extract_bullets(original_content)
-                content['findings'] = self._extract_findings(original_content)
+            text_content = self._extract_text_content(original_content)
+            if text_content:
+                content['text'] = text_content
+
+            llm_bullets = self._sanitize_bullets(generated_bullets.get(section_name))
+            extracted_bullets = self._sanitize_bullets(
+                self._extract_bullets(original_content)
+            )
+            if llm_bullets:
+                content['bullets'] = llm_bullets
+            elif extracted_bullets:
+                content['bullets'] = extracted_bullets
+
+            llm_findings = self._sanitize_bullets(generated_findings.get(section_name))
+            extracted_findings = self._sanitize_bullets(
+                self._extract_findings(original_content)
+            )
+            if llm_findings:
+                content['findings'] = llm_findings
+            elif extracted_findings:
+                content['findings'] = extracted_findings
 
             # Clean up None values
             content = {k: v for k, v in content.items() if v is not None}
@@ -94,7 +113,43 @@ class ContentBuilderAgent(BaseAgent):
                 'content': content
             })
 
+            parts = section_parts.get(section_name) or []
+            if len(parts) > 1:
+                for idx, part in enumerate(parts, start=1):
+                    part_content = {
+                        'description': part.get('description', '')
+                    }
+                    part_bullets = self._sanitize_bullets(part.get('bullets'))
+                    if part_bullets:
+                        part_content['bullets'] = part_bullets
+
+                    part_findings = self._sanitize_bullets(part.get('findings'))
+                    if part_findings:
+                        part_content['findings'] = part_findings
+
+                    sections.append({
+                        'name': f"{section_name} (Part {idx})",
+                        'content': part_content
+                    })
+
         return sections
+
+    def _sanitize_bullets(self, bullets: Any) -> Optional[List[str]]:
+        """Filter bullets to simple strings to avoid rendering raw tables."""
+        if not bullets:
+            return None
+        if not isinstance(bullets, list):
+            bullets = [bullets]
+
+        cleaned = []
+        for bullet in bullets:
+            if isinstance(bullet, bool):
+                continue
+            if isinstance(bullet, (int, float, str)):
+                text = str(bullet).strip()
+                if text:
+                    cleaned.append(text)
+        return cleaned or None
 
     def _extract_text_content(self, content: Dict[str, Any]) -> List[str]:
         """Extract text content from section data.
