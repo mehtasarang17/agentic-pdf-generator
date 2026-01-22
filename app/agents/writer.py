@@ -343,9 +343,19 @@ Guidelines:
         )
         summaries: Dict[str, str] = {}
         rewrite_count = 0
+        call_count = 0
         for batch in batches:
+            if call_count >= config.LLM_TABLE_VALUE_MAX_CALLS:
+                self.logger.warning(
+                    "Table value summarization call limit reached for %s; using fallbacks.",
+                    section_name
+                )
+                for key, value in batch.items():
+                    summaries[key] = self._fallback_table_value(value)
+                continue
             prompt = self._table_value_prompt(section_name, batch)
             try:
+                call_count += 1
                 response = self.invoke_llm(
                     prompt,
                     system_prompt=system_prompt,
@@ -398,7 +408,7 @@ Guidelines:
         return f"""Rewrite the values below into concise, readable summaries.
 Return ONLY valid JSON mapping the same keys to summary strings.
 Each summary should be one sentence or a short phrase with key numbers.
-Do NOT include JSON, braces, brackets, or key:value list formatting.
+Do not include extra text, code fences, or explanations.
 
 Section: {section_name}
 Data:

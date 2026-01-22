@@ -3,6 +3,8 @@
 import logging
 import os
 import json
+import uuid
+from datetime import datetime
 from pathlib import Path
 
 from flask import Blueprint, request, jsonify, send_file
@@ -137,12 +139,14 @@ def generate_pdf():
     """
     try:
         # Get JSON input
-        input_data = request.get_json()
+        raw_body = request.get_data(cache=True, as_text=True)
+        input_data = request.get_json(silent=True)
 
-        if not input_data:
+        if input_data is None:
+            message = 'No JSON data provided' if not raw_body else 'Invalid JSON payload'
             return jsonify({
                 'status': 'error',
-                'message': 'No JSON data provided'
+                'message': message
             }), 400
 
         # Normalize input so arrays/values do not fail schema validation.
@@ -219,15 +223,25 @@ def download_pdf(pdf_id: str):
         PDF file or error response
     """
     try:
-        # Validate PDF ID format (basic UUID validation)
-        if not pdf_id or len(pdf_id) != 36:
+        # Validate PDF ID format (UUID)
+        try:
+            pdf_id = str(uuid.UUID(pdf_id))
+        except (ValueError, AttributeError, TypeError):
             return jsonify({
                 'status': 'error',
                 'message': 'Invalid PDF ID format'
             }), 400
 
         # Construct file path
-        file_path = config.PDF_OUTPUT_DIR / f"{pdf_id}.pdf"
+        base_dir = config.PDF_OUTPUT_DIR.resolve()
+        file_path = (config.PDF_OUTPUT_DIR / f"{pdf_id}.pdf").resolve()
+        try:
+            file_path.relative_to(base_dir)
+        except ValueError:
+            return jsonify({
+                'status': 'error',
+                'message': 'Invalid PDF path'
+            }), 400
 
         if not file_path.exists():
             return jsonify({
@@ -301,7 +315,9 @@ def list_pdfs():
                 pdfs.append({
                     'id': pdf_file.stem,
                     'filename': pdf_file.name,
-                    'created_at': pdf_file.stat().st_mtime,
+                    'created_at': datetime.fromtimestamp(
+                        pdf_file.stat().st_mtime
+                    ).isoformat(),
                     'size': pdf_file.stat().st_size,
                     'download_url': f"/api/v1/download/{pdf_file.stem}"
                 })
@@ -333,7 +349,23 @@ def delete_pdf(pdf_id: str):
         JSON with status
     """
     try:
-        file_path = config.PDF_OUTPUT_DIR / f"{pdf_id}.pdf"
+        try:
+            pdf_id = str(uuid.UUID(pdf_id))
+        except (ValueError, AttributeError, TypeError):
+            return jsonify({
+                'status': 'error',
+                'message': 'Invalid PDF ID format'
+            }), 400
+
+        base_dir = config.PDF_OUTPUT_DIR.resolve()
+        file_path = (config.PDF_OUTPUT_DIR / f"{pdf_id}.pdf").resolve()
+        try:
+            file_path.relative_to(base_dir)
+        except ValueError:
+            return jsonify({
+                'status': 'error',
+                'message': 'Invalid PDF path'
+            }), 400
 
         if not file_path.exists():
             return jsonify({

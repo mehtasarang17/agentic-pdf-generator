@@ -26,6 +26,20 @@ class Config:
     # OpenAI settings
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
     OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
+    # Bedrock settings
+    BEDROCK_MODEL_ID = os.getenv(
+        "BEDROCK_MODEL_ID",
+        os.getenv("BEDROCK_MODEL", "amazon.nova-lite-v1:0")
+    )
+    BEDROCK_REGION = os.getenv(
+        "BEDROCK_REGION",
+        os.getenv("AWS_DEFAULT_REGION", os.getenv("AWS_REGION", "us-east-1"))
+    )
+    AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
+    AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
+    AWS_SESSION_TOKEN = os.getenv("AWS_SESSION_TOKEN")
+    AWS_BEARER_TOKEN_BEDROCK = os.getenv("AWS_BEARER_TOKEN_BEDROCK")
     LLM_INPUT_TOKEN_BUDGET = int(os.getenv("LLM_INPUT_TOKEN_BUDGET", "120000"))
     LLM_CHUNK_TOKEN_BUDGET = int(os.getenv("LLM_CHUNK_TOKEN_BUDGET", "20000"))
     LLM_MERGE_TOKEN_BUDGET = int(os.getenv("LLM_MERGE_TOKEN_BUDGET", "8000"))
@@ -61,6 +75,7 @@ class Config:
     )
     LLM_TABLE_VALUE_TOKEN_BUDGET = int(os.getenv("LLM_TABLE_VALUE_TOKEN_BUDGET", "12000"))
     LLM_TABLE_VALUE_MAX_TOKENS = int(os.getenv("LLM_TABLE_VALUE_MAX_TOKENS", "1200"))
+    LLM_TABLE_VALUE_MAX_CALLS = int(os.getenv("LLM_TABLE_VALUE_MAX_CALLS", "25"))
     LLM_TABLE_VALUE_REWRITE_MAX = int(os.getenv("LLM_TABLE_VALUE_REWRITE_MAX", "15"))
     LLM_TABLE_VALUE_REWRITE_MAX_TOKENS = int(
         os.getenv("LLM_TABLE_VALUE_REWRITE_MAX_TOKENS", "400")

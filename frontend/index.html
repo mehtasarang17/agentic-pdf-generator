@@ -668,7 +668,13 @@
             const bar = document.getElementById('statusBar');
             const msg = document.getElementById('statusMessage');
             bar.className = 'status-bar show ' + type;
-            msg.innerHTML = type === 'loading' ? '<span class="spinner"></span>' + message : message;
+            msg.replaceChildren();
+            if (type === 'loading') {
+                const spinner = document.createElement('span');
+                spinner.className = 'spinner';
+                msg.appendChild(spinner);
+            }
+            msg.appendChild(document.createTextNode(message));
         }
 
         // Hide status
@@ -766,9 +772,17 @@
                     const info = document.getElementById('resultInfo');
                     const link = document.getElementById('downloadLink');
 
-                    info.innerHTML = `<strong>${result.metadata?.title || 'Report'}</strong><br>
-                        Pages: ${result.metadata?.pages || 'N/A'} |
-                        Sections: ${result.metadata?.sections?.length || 0}`;
+                    info.replaceChildren();
+                    const title = result.metadata?.title || 'Report';
+                    const titleEl = document.createElement('strong');
+                    titleEl.textContent = title;
+                    info.appendChild(titleEl);
+                    info.appendChild(document.createElement('br'));
+                    const pages = result.metadata?.pages || 'N/A';
+                    const sectionsCount = result.metadata?.sections?.length || 0;
+                    info.appendChild(document.createTextNode(
+                        `Pages: ${pages} | Sections: ${sectionsCount}`
+                    ));
                     link.href = `http://localhost:8500${result.pdf_url}`;
                     preview.style.display = 'block';
 
@@ -784,6 +798,24 @@
             btn.disabled = false;
         }
 
+        function renderEmptyState(message, subMessage) {
+            const li = document.createElement('li');
+            li.className = 'empty-state';
+
+            const main = document.createElement('p');
+            main.textContent = message;
+            li.appendChild(main);
+
+            if (subMessage) {
+                const detail = document.createElement('p');
+                detail.style.fontSize = '0.875rem';
+                detail.textContent = subMessage;
+                li.appendChild(detail);
+            }
+
+            return li;
+        }
+
         // Load PDFs
         async function loadPDFs() {
             const list = document.getElementById('pdfList');
@@ -794,43 +826,64 @@
                 const pdfs = data.pdfs || [];
 
                 if (pdfs.length === 0) {
-                    list.innerHTML = `
-                        <li class="empty-state">
-                            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                            </svg>
-                            <p>No PDFs generated yet</p>
-                            <p style="font-size: 0.875rem;">Generate your first PDF using the form</p>
-                        </li>
-                    `;
+                    list.replaceChildren(
+                        renderEmptyState(
+                            'No PDFs generated yet',
+                            'Generate your first PDF using the form'
+                        )
+                    );
                     return;
                 }
 
-                list.innerHTML = pdfs.map(pdf => `
-                    <li class="pdf-item">
-                        <div class="pdf-info">
-                            <div class="pdf-name">${pdf.title || pdf.filename}</div>
-                            <div class="pdf-meta">
-                                ${pdf.client_name || 'client_name_not_specified'} • ${formatSize(pdf.size)} • ${pdf.pages || '?'} pages • ${formatDate(pdf.created_at)}
-                            </div>
-                        </div>
-                        <div class="pdf-actions">
-                            <a href="http://localhost:8500${pdf.download_url}" target="_blank" class="btn btn-success btn-sm">
-                                Download
-                            </a>
-                            <button class="btn btn-danger btn-sm" onclick="deletePDF('${pdf.id}')">
-                                Delete
-                            </button>
-                        </div>
-                    </li>
-                `).join('');
+                list.replaceChildren();
+                pdfs.forEach(pdf => {
+                    const item = document.createElement('li');
+                    item.className = 'pdf-item';
+
+                    const info = document.createElement('div');
+                    info.className = 'pdf-info';
+
+                    const name = document.createElement('div');
+                    name.className = 'pdf-name';
+                    name.textContent = pdf.title || pdf.filename;
+
+                    const meta = document.createElement('div');
+                    meta.className = 'pdf-meta';
+                    const clientName = pdf.client_name || 'client_name_not_specified';
+                    const pages = pdf.pages || '?';
+                    meta.textContent = `${clientName} • ${formatSize(pdf.size)} • ${pages} pages • ${formatDate(pdf.created_at)}`;
+
+                    info.appendChild(name);
+                    info.appendChild(meta);
+
+                    const actions = document.createElement('div');
+                    actions.className = 'pdf-actions';
+
+                    const download = document.createElement('a');
+                    download.className = 'btn btn-success btn-sm';
+                    download.target = '_blank';
+                    download.href = `http://localhost:8500${pdf.download_url}`;
+                    download.textContent = 'Download';
+
+                    const del = document.createElement('button');
+                    del.className = 'btn btn-danger btn-sm';
+                    del.textContent = 'Delete';
+                    del.addEventListener('click', () => deletePDF(pdf.id));
+
+                    actions.appendChild(download);
+                    actions.appendChild(del);
+
+                    item.appendChild(info);
+                    item.appendChild(actions);
+                    list.appendChild(item);
+                });
             } catch (e) {
-                list.innerHTML = `
-                    <li class="empty-state">
-                        <p>Could not load PDFs</p>
-                        <p style="font-size: 0.875rem;">Make sure the API server is running</p>
-                    </li>
-                `;
+                list.replaceChildren(
+                    renderEmptyState(
+                        'Could not load PDFs',
+                        'Make sure the API server is running'
+                    )
+                );
             }
         }
 

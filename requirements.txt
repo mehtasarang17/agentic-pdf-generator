@@ -5,12 +5,14 @@ gunicorn==21.2.0
 
 # OpenAI
 openai>=1.12.0
+boto3>=1.34.0
 
 # LangChain and LangGraph
 langchain>=0.2.0
 langchain-openai>=0.1.0
 langchain-core>=0.2.0
 langgraph>=0.2.50
+langchain-aws>=0.1.0
 
 # PDF Generation
 reportlab==4.1.0
