@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any
 
 from app.agents.state import AgentState
-from app.services.bedrock_service import bedrock_service
+from app.services.llm_router import llm_router
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ class BaseAgent(ABC):
             name: Agent name for logging and identification
         """
         self.name = name
-        self.llm = bedrock_service
+        self.llm = llm_router
         self.logger = logging.getLogger(f"{__name__}.{name}")
 
     @abstractmethod

@@ -24,7 +24,9 @@ class LLMService:
         prompt: str,
         system_prompt: Optional[str] = None,
         max_tokens: int = 4096,
-        temperature: float = 0.7
+        temperature: float = 0.7,
+        api_key: Optional[str] = None,
+        model: Optional[str] = None
     ) -> str:
         """
         Invoke the OpenAI LLM with a prompt.
@@ -46,8 +48,9 @@ class LLMService:
 
             messages.append({"role": "user", "content": prompt})
 
-            response = self.client.chat.completions.create(
-                model=self.model,
+            client = self.client if not api_key else OpenAI(api_key=api_key)
+            response = client.chat.completions.create(
+                model=model or self.model,
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=temperature

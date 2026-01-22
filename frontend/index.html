@@ -439,6 +439,34 @@
                 </div>
 
                 <div class="form-group">
+                    <label for="modelSelect">Model *</label>
+                    <select id="modelSelect" onchange="updateModelFields()">
+                        <option value="" selected disabled>Select a model</option>
+                        <option value="openai">gpt-4o-mini</option>
+                        <option value="bedrock">AWS Bedrock Nova Lite</option>
+                    </select>
+                </div>
+
+                <div class="form-group" id="openaiKeyGroup" style="display: none;">
+                    <label for="openaiKey">OpenAI API Key *</label>
+                    <input type="password" id="openaiKey" placeholder="sk-...">
+                </div>
+
+                <div class="form-group" id="bedrockTokenGroup" style="display: none;">
+                    <label for="bedrockToken">AWS Bedrock Bearer Token *</label>
+                    <input type="password" id="bedrockToken" placeholder="Bearer token">
+                </div>
+
+                <div class="form-group" id="bedrockRegionGroup" style="display: none;">
+                    <label for="bedrockRegion">AWS Region *</label>
+                    <input type="text" id="bedrockRegion" value="ap-south-1">
+                </div>
+
+                <button class="btn btn-secondary btn-sm" onclick="checkModelHealth()" type="button">
+                    Check Model Health
+                </button>
+
+                <div class="form-group">
                     <label for="jsonData">Report Data (JSON)</label>
                     <textarea id="jsonData" placeholder="Enter your JSON data here..."></textarea>
                 </div>
@@ -642,6 +670,84 @@
             document.getElementById('jsonData').value = JSON.stringify(data, null, 2);
         }
 
+        function updateModelFields() {
+            const model = document.getElementById('modelSelect').value;
+            const openaiGroup = document.getElementById('openaiKeyGroup');
+            const bedrockTokenGroup = document.getElementById('bedrockTokenGroup');
+            const bedrockRegionGroup = document.getElementById('bedrockRegionGroup');
+
+            openaiGroup.style.display = model === 'openai' ? 'block' : 'none';
+            bedrockTokenGroup.style.display = model === 'bedrock' ? 'block' : 'none';
+            bedrockRegionGroup.style.display = model === 'bedrock' ? 'block' : 'none';
+        }
+
+        function buildModelPayload() {
+            const selectedModel = document.getElementById('modelSelect').value;
+            const openaiKey = document.getElementById('openaiKey').value.trim();
+            const bedrockToken = document.getElementById('bedrockToken').value.trim();
+            const bedrockRegion = document.getElementById('bedrockRegion').value.trim();
+
+            if (!selectedModel) {
+                return { error: 'Please select a model' };
+            }
+
+            if (selectedModel === 'openai' && !openaiKey) {
+                return { error: 'OpenAI API Key is required for gpt-4o-mini' };
+            }
+
+            if (selectedModel === 'bedrock') {
+                if (!bedrockToken) {
+                    return { error: 'AWS Bedrock Bearer Token is required' };
+                }
+                if (!bedrockRegion) {
+                    return { error: 'AWS Region is required' };
+                }
+            }
+
+            const payload = {
+                llm_provider: selectedModel === 'openai' ? 'openai' : 'bedrock',
+                llm_model: selectedModel === 'openai'
+                    ? 'gpt-4o-mini'
+                    : 'apac.amazon.nova-lite-v1:0'
+            };
+
+            if (selectedModel === 'openai') {
+                payload.openai_api_key = openaiKey;
+            } else {
+                payload.bedrock_bearer_token = bedrockToken;
+                payload.bedrock_region = bedrockRegion;
+            }
+
+            return payload;
+        }
+
+        async function checkModelHealth() {
+            const payload = buildModelPayload();
+            if (payload.error) {
+                showStatus(payload.error, 'error');
+                return;
+            }
+
+            showStatus('Checking model credentials...', 'loading');
+            try {
+                const response = await fetch(`${API_BASE}/llm-health`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(payload)
+                });
+                const result = await response.json();
+                if (response.ok && result.status === 'success') {
+                    showStatus(result.message || 'Model health check passed.', 'success');
+                } else {
+                    showStatus(result.message || 'Model health check failed.', 'error');
+                }
+            } catch (e) {
+                showStatus('Failed to connect to API. Is the server running?', 'error');
+            }
+        }
+
         // Check health
         async function checkHealth() {
             const dot = document.getElementById('healthDot');
@@ -722,6 +828,12 @@
                 return;
             }
 
+            const modelPayload = buildModelPayload();
+            if (modelPayload.error) {
+                showStatus(modelPayload.error, 'error');
+                return;
+            }
+
             let data;
             try {
                 data = JSON.parse(jsonData);
@@ -741,6 +853,8 @@
                 showStatus('JSON must include a non-empty data object', 'error');
                 return;
             }
+
+            Object.assign(payload, modelPayload);
 
             btn.disabled = true;
             showStatus('Generating PDF with AI agents...', 'loading');
@@ -914,6 +1028,7 @@
 
         // Initialize
         loadTemplate('security');
+        updateModelFields();
         checkHealth();
         loadPDFs();
         setInterval(checkHealth, 30000);

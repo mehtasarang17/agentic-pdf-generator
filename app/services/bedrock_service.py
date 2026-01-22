@@ -23,22 +23,36 @@ except ImportError:  # pragma: no cover - runtime dependency
 class BedrockService:
     """Service for interacting with AWS Bedrock models."""
 
-    def __init__(self):
+    def __init__(
+        self,
+        model_id: Optional[str] = None,
+        region: Optional[str] = None,
+        bearer_token: Optional[str] = None,
+        access_key_id: Optional[str] = None,
+        secret_access_key: Optional[str] = None,
+        session_token: Optional[str] = None
+    ):
+        self.model_id = model_id or config.BEDROCK_MODEL_ID
+        self.region = region or config.BEDROCK_REGION
+        self.bearer_token = bearer_token or config.AWS_BEARER_TOKEN_BEDROCK
+        self.access_key_id = access_key_id or config.AWS_ACCESS_KEY_ID
+        self.secret_access_key = secret_access_key or config.AWS_SECRET_ACCESS_KEY
+        self.session_token = session_token or config.AWS_SESSION_TOKEN
+
         self.client = self._get_bedrock_client()
-        self.model_id = config.BEDROCK_MODEL_ID
         self.llm = self._get_llm()
 
     def _get_bedrock_client(self):
         session_kwargs = {}
-        if config.AWS_ACCESS_KEY_ID and config.AWS_SECRET_ACCESS_KEY:
-            session_kwargs["aws_access_key_id"] = config.AWS_ACCESS_KEY_ID
-            session_kwargs["aws_secret_access_key"] = config.AWS_SECRET_ACCESS_KEY
-        if config.AWS_SESSION_TOKEN:
-            session_kwargs["aws_session_token"] = config.AWS_SESSION_TOKEN
-        if config.AWS_BEARER_TOKEN_BEDROCK and not session_kwargs:
-            session_kwargs["aws_session_token"] = config.AWS_BEARER_TOKEN_BEDROCK
-        if config.BEDROCK_REGION:
-            session_kwargs["region_name"] = config.BEDROCK_REGION
+        if self.access_key_id and self.secret_access_key:
+            session_kwargs["aws_access_key_id"] = self.access_key_id
+            session_kwargs["aws_secret_access_key"] = self.secret_access_key
+        if self.session_token:
+            session_kwargs["aws_session_token"] = self.session_token
+        if self.bearer_token and not session_kwargs:
+            session_kwargs["aws_session_token"] = self.bearer_token
+        if self.region:
+            session_kwargs["region_name"] = self.region
 
         session = boto3.Session(**session_kwargs)
         return session.client(
@@ -54,6 +68,13 @@ class BedrockService:
             model=self.model_id,
             temperature=0.3,
             max_tokens=8000
+        )
+
+    def matches(self, model_id: str, region: str, bearer_token: Optional[str]) -> bool:
+        return (
+            self.model_id == model_id
+            and self.region == region
+            and self.bearer_token == bearer_token
         )
 
     def invoke(

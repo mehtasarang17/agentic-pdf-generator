@@ -6,6 +6,7 @@ import json
 import uuid
 from datetime import datetime
 from pathlib import Path
+from typing import Dict, Any
 
 from flask import Blueprint, request, jsonify, send_file
 
@@ -13,6 +14,8 @@ from app.agents.orchestrator import orchestrate_pdf_generation
 from app.config import config
 from app.models.pdf import PDFDocument
 from app.services.database_service import DatabaseService
+from app.services.llm_router import set_llm_context, reset_llm_context
+from app.services.llm_router import llm_router
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +105,17 @@ def _normalize_section_value(value):
     return {'type': 'descriptive', 'content': {'text': [str(value)]}}
 
 
+_LLM_FIELDS = {
+    "llm_provider",
+    "llm_model",
+    "openai_api_key",
+    "bedrock_bearer_token",
+    "bedrock_region",
+    "model",
+    "provider",
+}
+
+
 def _normalize_input_payload(payload):
     """Convert raw input into the expected {data: {section: {type, content}}} shape."""
     if not isinstance(payload, dict):
@@ -110,13 +124,47 @@ def _normalize_input_payload(payload):
     if isinstance(payload.get('data'), dict):
         data = payload['data']
     else:
-        data = {k: v for k, v in payload.items() if k != 'client_name'}
+        data = {
+            k: v
+            for k, v in payload.items()
+            if k not in _LLM_FIELDS and k != 'client_name'
+        }
 
     normalized = {key: _normalize_section_value(value) for key, value in data.items()}
     result = {'data': normalized}
     if 'client_name' in payload:
         result['client_name'] = payload.get('client_name')
     return result
+
+
+def _extract_llm_context(payload: dict) -> Dict[str, Any]:
+    provider = (payload.get("llm_provider") or payload.get("provider") or "").lower()
+    model = payload.get("llm_model") or payload.get("model")
+    if provider not in {"openai", "bedrock"}:
+        return {"error": "LLM provider is required. Use 'openai' or 'bedrock'."}
+
+    if provider == "openai":
+        api_key = payload.get("openai_api_key")
+        if not api_key:
+            return {"error": "OPENAI_API_KEY is required for gpt-4o-mini."}
+        return {
+            "provider": "openai",
+            "model": model or "gpt-4o-mini",
+            "openai_api_key": api_key
+        }
+
+    bearer_token = payload.get("bedrock_bearer_token")
+    region = payload.get("bedrock_region")
+    if not bearer_token:
+        return {"error": "AWS_BEARER_TOKEN_BEDROCK is required for Bedrock."}
+    if not region:
+        return {"error": "AWS region is required for Bedrock."}
+    return {
+        "provider": "bedrock",
+        "model": model or "apac.amazon.nova-lite-v1:0",
+        "bedrock_bearer_token": bearer_token,
+        "bedrock_region": region
+    }
 
 
 @pdf_bp.route('/generate-pdf', methods=['POST'])
@@ -149,15 +197,31 @@ def generate_pdf():
                 'message': message
             }), 400
 
+        llm_context = _extract_llm_context(input_data)
+        if llm_context.get("error"):
+            return jsonify({
+                'status': 'error',
+                'message': llm_context['error']
+            }), 400
+
+        # Remove auth/model fields from payload before normalization/storage.
+        sanitized_payload = {
+            k: v for k, v in input_data.items() if k not in _LLM_FIELDS
+        }
+
         # Normalize input so arrays/values do not fail schema validation.
-        input_data = _normalize_input_payload(input_data)
+        input_data = _normalize_input_payload(sanitized_payload)
 
         client_name = input_data.get('client_name')
         display_client_name = client_name if client_name else 'client_name_not_specified'
         logger.info(f"Received PDF generation request: {display_client_name}")
 
-        # Run the workflow
-        final_state = orchestrate_pdf_generation(input_data)
+        # Run the workflow with per-request LLM context.
+        token = set_llm_context(llm_context)
+        try:
+            final_state = orchestrate_pdf_generation(input_data)
+        finally:
+            reset_llm_context(token)
 
         # Check for errors
         if final_state.get('error'):
@@ -210,6 +274,47 @@ def generate_pdf():
             'status': 'error',
             'message': f'Internal server error: {str(e)}'
         }), 500
+
+
+@pdf_bp.route('/llm-health', methods=['POST'])
+def llm_health_check():
+    """Check LLM credentials for the selected provider/model."""
+    try:
+        payload = request.get_json(silent=True) or {}
+        llm_context = _extract_llm_context(payload)
+        if llm_context.get("error"):
+            return jsonify({
+                'status': 'error',
+                'message': llm_context['error']
+            }), 400
+
+        token = set_llm_context(llm_context)
+        try:
+            response = llm_router.invoke(
+                "Reply with OK.",
+                system_prompt="Return only OK.",
+                max_tokens=5,
+                temperature=0.0
+            )
+        finally:
+            reset_llm_context(token)
+
+        if not response.strip():
+            return jsonify({
+                'status': 'error',
+                'message': 'LLM health check failed: empty response.'
+            }), 502
+
+        return jsonify({
+            'status': 'success',
+            'message': 'LLM health check passed.'
+        }), 200
+    except Exception as e:
+        logger.error(f"LLM health check error: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': f'LLM health check failed: {str(e)}'
+        }), 502
 
 
 @pdf_bp.route('/download/<pdf_id>', methods=['GET'])
