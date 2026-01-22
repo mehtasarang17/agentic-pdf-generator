@@ -80,9 +80,9 @@ def should_continue_after_writer(state: AgentState) -> Literal["visualizer", "co
     Returns:
         Next node name
     """
-    if state.get('has_analytics'):
-        return "visualizer"
-    return "content_builder"
+    if state.get('error'):
+        return "content_builder"
+    return "visualizer"
 
 
 def create_pdf_workflow() -> StateGraph:

@@ -34,18 +34,28 @@ class VisualizerAgent(BaseAgent):
         charts = {}
 
         for plan in section_plans:
-            if not plan.get('needs_chart'):
-                continue
-
             section_name = plan['name']
             content = plan['content']
             chart_type = plan.get('chart_type', 'bar')
 
             try:
-                chart_bytes = self._create_chart(section_name, content, chart_type)
+                chart_bytes, resolved_type = self._create_chart(
+                    section_name,
+                    content,
+                    chart_type
+                )
                 if chart_bytes:
                     charts[section_name] = [chart_bytes]
-                    self.logger.debug(f"Created {chart_type} chart for {section_name}")
+                    self.logger.debug(
+                        "Created %s chart for %s",
+                        resolved_type or chart_type,
+                        section_name
+                    )
+                else:
+                    self.logger.debug(
+                        "No chartable data for section '%s'; skipping chart.",
+                        section_name
+                    )
             except Exception as e:
                 self.logger.error(f"Failed to create chart for {section_name}: {e}")
 
@@ -60,7 +70,7 @@ class VisualizerAgent(BaseAgent):
         section_name: str,
         content: Dict[str, Any],
         chart_type: str
-    ) -> bytes:
+    ) -> Tuple[Optional[bytes], Optional[str]]:
         """Create a chart for the given content.
 
         Args:
@@ -76,15 +86,22 @@ class VisualizerAgent(BaseAgent):
 
         if not chart_data:
             self.logger.warning(f"No chartable data in {section_name}")
-            return None
+            return None, None
 
         resolved_type = self._resolve_chart_type(chart_data, chart_type)
+        if not self._has_chartable_points(chart_data, resolved_type):
+            self.logger.warning(
+                "Skipping chart for %s due to insufficient data points.",
+                section_name
+            )
+            return None, None
 
-        return self.chart_service.create_chart(
+        chart_bytes = self.chart_service.create_chart(
             chart_type=resolved_type,
             data=chart_data,
             title=f"{section_name}"
         )
+        return chart_bytes, resolved_type
 
     def _prepare_chart_data(self, content: Dict[str, Any]) -> Dict[str, Any]:
         """Prepare content data for charting.
@@ -264,6 +281,19 @@ class VisualizerAgent(BaseAgent):
             except ValueError:
                 return None
         return None
+
+    def _has_chartable_points(self, chart_data: Dict[str, Any], chart_type: str) -> bool:
+        if not chart_data:
+            return False
+        if chart_type == "line":
+            max_len = 0
+            for value in chart_data.values():
+                if isinstance(value, list):
+                    max_len = max(max_len, len(value))
+                else:
+                    max_len = max(max_len, 1)
+            return max_len >= 2
+        return len(chart_data) >= 2
 
     def _detect_best_chart_type(self, chart_data: Dict[str, Any]) -> str:
         """Detect the best chart type for prepared chart data."""

@@ -16,6 +16,51 @@ logger = logging.getLogger(__name__)
 
 pdf_bp = Blueprint('pdf', __name__)
 
+def _coerce_number(value):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        cleaned = value.strip().replace(",", "")
+        if cleaned.endswith("%"):
+            cleaned = cleaned[:-1]
+        try:
+            return float(cleaned)
+        except ValueError:
+            return None
+    return None
+
+def _count_numeric_values(value, sample_limit=2000):
+    numeric_count = 0
+    total_count = 0
+    stack = [value]
+
+    while stack and total_count < sample_limit:
+        current = stack.pop()
+        if isinstance(current, dict):
+            stack.extend(list(current.values()))
+            continue
+        if isinstance(current, list):
+            stack.extend(current)
+            continue
+        total_count += 1
+        if _coerce_number(current) is not None:
+            numeric_count += 1
+
+    return numeric_count, total_count
+
+def _maybe_parse_json_string(value):
+    if not isinstance(value, str):
+        return None
+    trimmed = value.strip()
+    if not trimmed or trimmed[0] not in "{[" or trimmed[-1] not in "}]":
+        return None
+    try:
+        return json.loads(trimmed)
+    except json.JSONDecodeError:
+        return None
+
 def _normalize_section_value(value):
     """Normalize a raw section value into the expected schema."""
     if isinstance(value, dict) and 'type' in value and 'content' in value:
@@ -23,26 +68,27 @@ def _normalize_section_value(value):
         content = value.get('content') if isinstance(value.get('content'), dict) else {'value': value.get('content')}
         return {'type': section_type, 'content': content}
 
+    if isinstance(value, str):
+        parsed = _maybe_parse_json_string(value)
+        if isinstance(parsed, dict):
+            has_structured_keys = any(
+                key in parsed for key in ("description", "bullets", "findings", "summary")
+            )
+            if has_structured_keys:
+                return {'type': 'descriptive', 'content': parsed}
+            value = parsed
+
     if isinstance(value, dict):
-        if value and all(isinstance(v, (int, float)) for v in value.values()):
-            return {'type': 'analytics', 'content': value}
-
-        bullets = []
-        for key, item in value.items():
-            if isinstance(item, (str, int, float, bool)) or item is None:
-                bullets.append(f"{key}: {item}")
-            elif isinstance(item, list):
-                if all(isinstance(v, (str, int, float, bool)) or v is None for v in item):
-                    bullets.append(f"{key}: {', '.join(str(v) for v in item)}")
-                else:
-                    bullets.append(f"{key}: {json.dumps(item, ensure_ascii=True)}")
-            else:
-                bullets.append(f"{key}: {json.dumps(item, ensure_ascii=True)}")
-
-        content = {'bullets': bullets} if bullets else {'text': [json.dumps(value, ensure_ascii=True)]}
-        return {'type': 'descriptive', 'content': content}
+        numeric_count, total_count = _count_numeric_values(value)
+        is_analytic = numeric_count >= 2 and (total_count == 0 or numeric_count / total_count >= 0.2)
+        section_type = 'analytics' if is_analytic else 'descriptive'
+        return {'type': section_type, 'content': value}
 
     if isinstance(value, list):
+        numeric_count, total_count = _count_numeric_values(value)
+        is_analytic = numeric_count >= 2 and (total_count == 0 or numeric_count / total_count >= 0.2)
+        if is_analytic:
+            return {'type': 'analytics', 'content': {'items': value}}
         bullets = []
         for item in value:
             if isinstance(item, (str, int, float, bool)) or item is None:

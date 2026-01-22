@@ -117,6 +117,23 @@ class PDFService:
         elements.append(table)
         elements.append(Spacer(1, 0.2 * inch))
 
+    def _format_table_value(self, value: Any) -> str:
+        """Format table cell values for wrapping."""
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=True)
+        return str(value)
+
+    def _build_table_cell_style(self) -> ParagraphStyle:
+        """Style for table cells that need aggressive wrapping."""
+        return ParagraphStyle(
+            "TableCellWrap",
+            parent=self.styles['BodyText'],
+            fontSize=9.5,
+            leading=11,
+            alignment=TA_LEFT,
+            wordWrap="CJK",
+        )
+
     def _draw_watermark(self, canvas) -> None:
         """Draw watermark image centered on the page."""
         watermark_path = self.watermark_path
@@ -392,11 +409,31 @@ class PDFService:
 
         # Add data table if present
         if 'data' in content and isinstance(content['data'], dict):
-            table_data = [['Metric', 'Value']]
+            cell_style = self._build_table_cell_style()
+            header_style = ParagraphStyle(
+                "TableHeader",
+                parent=self.styles['BodyText'],
+                fontName="Helvetica-Bold",
+                fontSize=10,
+                leading=12,
+                alignment=TA_LEFT,
+                textColor=WHITE,
+                wordWrap="CJK",
+            )
+            table_data = [
+                [Paragraph("Metric", header_style), Paragraph("Value", header_style)]
+            ]
             for key, value in content['data'].items():
-                table_data.append([str(key), str(value)])
+                table_data.append([
+                    Paragraph(str(key), cell_style),
+                    Paragraph(self._format_table_value(value), cell_style)
+                ])
 
-            table = Table(table_data, colWidths=[3 * inch, 2 * inch])
+            table_width = PAGE_WIDTH - MARGIN_LEFT - MARGIN_RIGHT
+            table = Table(
+                table_data,
+                colWidths=[table_width * 0.38, table_width * 0.62]
+            )
             table.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), PRIMARY_COLOR),
                 ('TEXTCOLOR', (0, 0), (-1, 0), WHITE),
@@ -408,6 +445,7 @@ class PDFService:
                 ('BACKGROUND', (0, 1), (-1, -1), LIGHT_GRAY),
                 ('GRID', (0, 0), (-1, -1), 1, colors.white),
                 ('ROWBACKGROUNDS', (0, 1), (-1, -1), [WHITE, LIGHT_GRAY]),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
             ]))
             elements.append(table)
             elements.append(Spacer(1, 0.3 * inch))
@@ -497,13 +535,15 @@ class PDFService:
         elements.extend(self._create_toc_page(toc_sections))
 
         # Pages 4+: Content sections
-        for section in sections:
+        for idx, section in enumerate(sections):
+            if idx > 0:
+                elements.append(PageBreak())
+
             section_name = section.get('name', 'Section')
             content = section.get('content', {})
             section_charts = charts.get(section_name, [])
 
             elements.extend(self._create_section(section_name, content, section_charts))
-            elements.append(PageBreak())
 
         # Build PDF with header/footer
         def add_header_footer(canvas, doc):

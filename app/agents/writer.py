@@ -3,7 +3,7 @@
 import json
 import logging
 import re
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from app.agents.base import BaseAgent
 from app.agents.state import AgentState
@@ -37,6 +37,7 @@ class WriterAgent(BaseAgent):
         generated_findings = {}
         section_summaries = {}
         section_parts = {}
+        table_value_summaries = {}
 
         for plan in section_plans:
             section_name = plan['name']
@@ -55,6 +56,10 @@ class WriterAgent(BaseAgent):
             parts = structured.get('parts')
             if parts:
                 section_parts[section_name] = parts
+            if section_type == 'analytics' and isinstance(content, dict):
+                summaries = self._summarize_table_values(section_name, content)
+                if summaries:
+                    table_value_summaries[section_name] = summaries
 
             self.logger.debug(f"Generated content for section: {section_name}")
 
@@ -64,6 +69,8 @@ class WriterAgent(BaseAgent):
         state['section_summaries'] = section_summaries
         if section_parts:
             state['section_parts'] = section_parts
+        if table_value_summaries:
+            state['table_value_summaries'] = table_value_summaries
 
         self.logger.info(f"Generated descriptions for {len(generated_descriptions)} sections")
 
@@ -202,6 +209,14 @@ class WriterAgent(BaseAgent):
             "Respond only with valid JSON."
         )
 
+    def _table_value_system_prompt(self) -> str:
+        return (
+            "You are a data summarizer. "
+            "Return ONLY valid JSON that maps each key to a concise, "
+            "readable summary string. Do not include JSON, braces, brackets, "
+            "or key:value lists in the summaries."
+        )
+
     def _response_spec(self, detailed: bool) -> Dict[str, Any]:
         if detailed:
             return {
@@ -311,6 +326,181 @@ Guidelines:
             "findings": findings,
             "summary": summary
         }
+
+    def _summarize_table_values(
+        self,
+        section_name: str,
+        content: Dict[str, Any]
+    ) -> Dict[str, str]:
+        if not content:
+            return {}
+
+        system_prompt = self._table_value_system_prompt()
+        batches = self._batch_table_values(
+            section_name,
+            content,
+            system_prompt
+        )
+        summaries: Dict[str, str] = {}
+        rewrite_count = 0
+        for batch in batches:
+            prompt = self._table_value_prompt(section_name, batch)
+            try:
+                response = self.invoke_llm(
+                    prompt,
+                    system_prompt=system_prompt,
+                    max_tokens=config.LLM_TABLE_VALUE_MAX_TOKENS,
+                    temperature=0.3
+                )
+            except Exception as exc:
+                self.logger.error(
+                    "Failed to summarize table values for %s: %s",
+                    section_name,
+                    exc
+                )
+                for key, value in batch.items():
+                    summaries[key] = self._fallback_table_value(value)
+                continue
+
+            parsed = self._parse_json_response(response)
+            if not isinstance(parsed, dict):
+                for key, value in batch.items():
+                    summaries[key] = self._fallback_table_value(value)
+                continue
+
+            for key, value in batch.items():
+                summary = parsed.get(key)
+                if isinstance(summary, str) and summary.strip():
+                    cleaned = summary.strip()
+                    if (
+                        self._summary_needs_rewrite(cleaned)
+                        and rewrite_count < config.LLM_TABLE_VALUE_REWRITE_MAX
+                    ):
+                        rewritten = self._rewrite_table_value(
+                            section_name,
+                            key,
+                            value
+                        )
+                        if rewritten:
+                            summaries[key] = rewritten
+                            rewrite_count += 1
+                        else:
+                            summaries[key] = self._fallback_table_value(value)
+                    else:
+                        summaries[key] = cleaned
+                else:
+                    summaries[key] = self._fallback_table_value(value)
+
+        return summaries
+
+    def _table_value_prompt(self, section_name: str, data: Dict[str, Any]) -> str:
+        content_str = json.dumps(data, indent=2, ensure_ascii=True)
+        return f"""Rewrite the values below into concise, readable summaries.
+Return ONLY valid JSON mapping the same keys to summary strings.
+Each summary should be one sentence or a short phrase with key numbers.
+Do NOT include JSON, braces, brackets, or key:value list formatting.
+
+Section: {section_name}
+Data:
+{content_str}
+"""
+
+    def _batch_table_values(
+        self,
+        section_name: str,
+        content: Dict[str, Any],
+        system_prompt: str
+    ) -> List[Dict[str, Any]]:
+        batches: List[Dict[str, Any]] = []
+        current: Dict[str, Any] = {}
+        for key, value in content.items():
+            candidate = {**current, key: value}
+            prompt = self._table_value_prompt(section_name, candidate)
+            if self._estimate_prompt_tokens(prompt, system_prompt) <= config.LLM_TABLE_VALUE_TOKEN_BUDGET:
+                current = candidate
+            else:
+                if current:
+                    batches.append(current)
+                current = {key: value}
+        if current:
+            batches.append(current)
+        return batches
+
+    def _fallback_table_value(self, value: Any) -> str:
+        if isinstance(value, dict):
+            return self._summarize_dict_value(value)
+        if isinstance(value, list):
+            if not value:
+                return "No items"
+            sample = value[:3]
+            return f"{len(value)} items; sample: {', '.join(self._format_scalar(item) for item in sample)}"
+        return str(value)
+
+    def _rewrite_table_value(
+        self,
+        section_name: str,
+        key: str,
+        value: Any
+    ) -> Optional[str]:
+        system_prompt = (
+            "You rewrite metric values into clear, readable summaries. "
+            "Do NOT output JSON or key:value lists. Use plain sentences."
+        )
+        payload = json.dumps(value, indent=2, ensure_ascii=True)
+        prompt = f"""Rewrite the metric value into a clear summary.
+Metric: {key}
+Value:
+{payload}
+
+Constraints:
+- No JSON, braces, brackets, or key:value lists
+- Keep key numbers and counts
+- One or two sentences max
+"""
+        if self._estimate_prompt_tokens(prompt, system_prompt) > config.LLM_TABLE_VALUE_TOKEN_BUDGET:
+            return None
+        try:
+            response = self.invoke_llm(
+                prompt,
+                system_prompt=system_prompt,
+                max_tokens=config.LLM_TABLE_VALUE_REWRITE_MAX_TOKENS,
+                temperature=0.3
+            )
+        except Exception as exc:
+            self.logger.error(
+                "Failed to rewrite table value for %s: %s",
+                key,
+                exc
+            )
+            return None
+        cleaned = response.strip().strip('"')
+        if not cleaned or self._summary_needs_rewrite(cleaned):
+            return None
+        return cleaned
+
+    def _summary_needs_rewrite(self, summary: str) -> bool:
+        if not summary:
+            return True
+        return any(token in summary for token in ("{", "}", "[", "]"))
+
+    def _summarize_dict_value(self, value: Dict[str, Any]) -> str:
+        parts = []
+        for idx, (key, val) in enumerate(value.items()):
+            if idx >= 6:
+                break
+            parts.append(f"{self._format_key(key)} {self._format_scalar(val)}")
+        return "; ".join(parts)
+
+    def _format_key(self, key: Any) -> str:
+        text = str(key).replace("_", " ").strip()
+        return text.title() if text else str(key)
+
+    def _format_scalar(self, value: Any) -> str:
+        if isinstance(value, dict):
+            return "multiple fields"
+        if isinstance(value, list):
+            return f"{len(value)} items"
+        return str(value)
 
     def _estimate_tokens(self, text: str) -> int:
         if not text:
@@ -841,7 +1031,47 @@ Guidelines:
             parsed = json.loads(cleaned)
             return parsed if isinstance(parsed, dict) else {}
         except json.JSONDecodeError:
-            return {}
+            repaired = self._repair_json_string(cleaned)
+            try:
+                parsed = json.loads(repaired)
+                return parsed if isinstance(parsed, dict) else {}
+            except json.JSONDecodeError:
+                return {}
+
+    def _repair_json_string(self, text: str) -> str:
+        """Attempt to repair JSON with unescaped newlines inside strings."""
+        output = []
+        in_string = False
+        escape = False
+
+        for ch in text:
+            if in_string:
+                if escape:
+                    output.append(ch)
+                    escape = False
+                    continue
+                if ch == "\\":
+                    output.append(ch)
+                    escape = True
+                    continue
+                if ch == '"':
+                    in_string = False
+                    output.append(ch)
+                    continue
+                if ch == "\n":
+                    output.append("\\n")
+                    continue
+                if ch == "\r":
+                    continue
+                if ch == "\t":
+                    output.append("\\t")
+                    continue
+            else:
+                if ch == '"':
+                    in_string = True
+            output.append(ch)
+
+        return "".join(output)
 
     def _normalize_list(self, value: Any) -> List[str]:
         """Normalize LLM list outputs into a list of strings."""

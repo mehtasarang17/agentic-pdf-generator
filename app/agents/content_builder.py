@@ -1,6 +1,7 @@
 """Content Builder Agent - Assembles final PDF content."""
 
 import logging
+import re
 from typing import Dict, Any, List, Optional
 
 from app.agents.base import BaseAgent
@@ -70,17 +71,23 @@ class ContentBuilderAgent(BaseAgent):
         generated_findings = state.get('generated_findings', {})
         summaries = state.get('section_summaries', {})
         section_parts = state.get('section_parts', {})
+        table_value_summaries = state.get('table_value_summaries', {})
 
         sections = []
 
         for plan in section_plans:
             section_name = plan['name']
             original_content = plan['content']
+            summarized_values = table_value_summaries.get(section_name, {})
 
             # Build section content
             content = {
                 'description': descriptions.get(section_name, ''),
-                'data': original_content if plan['type'] == 'analytics' else None,
+                'data': (
+                    self._apply_table_summaries(original_content, summarized_values)
+                    if plan['type'] == 'analytics'
+                    else None
+                ),
             }
 
             text_content = self._extract_text_content(original_content)
@@ -134,6 +141,21 @@ class ContentBuilderAgent(BaseAgent):
 
         return sections
 
+    def _apply_table_summaries(
+        self,
+        data: Dict[str, Any],
+        summaries: Dict[str, str]
+    ) -> Dict[str, Any]:
+        if not isinstance(data, dict) or not summaries:
+            return data
+        summarized = {}
+        for key, value in data.items():
+            if key in summaries:
+                summarized[key] = summaries[key]
+            else:
+                summarized[key] = value
+        return summarized
+
     def _sanitize_bullets(self, bullets: Any) -> Optional[List[str]]:
         """Filter bullets to simple strings to avoid rendering raw tables."""
         if not bullets:
@@ -145,9 +167,11 @@ class ContentBuilderAgent(BaseAgent):
         for bullet in bullets:
             if isinstance(bullet, bool):
                 continue
-            if isinstance(bullet, (int, float, str)):
-                text = str(bullet).strip()
-                if text:
+            if isinstance(bullet, (int, float)):
+                continue
+            if isinstance(bullet, str):
+                text = bullet.strip()
+                if text and not self._is_numeric_text(text):
                     cleaned.append(text)
         return cleaned or None
 
@@ -167,11 +191,27 @@ class ContentBuilderAgent(BaseAgent):
             if key in skip_keys:
                 continue
             if isinstance(value, str):
-                text_items.append(value)
+                if not self._is_narrative_key(key):
+                    continue
+                cleaned = value.strip()
+                if (
+                    cleaned
+                    and not self._is_numeric_text(cleaned)
+                    and not self._is_standalone_value_text(cleaned)
+                ):
+                    text_items.append(cleaned)
             elif isinstance(value, list):
+                if not self._is_narrative_key(key):
+                    continue
                 for item in value:
                     if isinstance(item, str):
-                        text_items.append(item)
+                        cleaned = item.strip()
+                        if (
+                            cleaned
+                            and not self._is_numeric_text(cleaned)
+                            and not self._is_standalone_value_text(cleaned)
+                        ):
+                            text_items.append(cleaned)
 
         return text_items if text_items else None
 
@@ -207,6 +247,62 @@ class ContentBuilderAgent(BaseAgent):
             return content['findings']
 
         return None
+
+    def _is_numeric_text(self, text: str) -> bool:
+        """Return True if text is just a number (optionally with %)."""
+        cleaned = text.strip().replace(",", "")
+        if cleaned.endswith("%"):
+            cleaned = cleaned[:-1].strip()
+        try:
+            float(cleaned)
+            return True
+        except ValueError:
+            return False
+
+    def _is_standalone_value_text(self, text: str) -> bool:
+        """Return True for single-token values like IDs or timestamps."""
+        cleaned = text.strip()
+        if not cleaned:
+            return True
+        if any(ch.isspace() for ch in cleaned):
+            return False
+        if self._is_iso_timestamp(cleaned):
+            return True
+        lowered = cleaned.lower()
+        if lowered in {"ok", "true", "false", "yes", "no", "none", "null", "unknown"}:
+            return True
+        if lowered.startswith("http://") or lowered.startswith("https://"):
+            return True
+        if len(cleaned) >= 8 and all(ch.isalnum() or ch in "-_" for ch in cleaned):
+            return True
+        return False
+
+    def _is_iso_timestamp(self, text: str) -> bool:
+        """Return True if text matches common ISO-8601 timestamp formats."""
+        iso_patterns = (
+            r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$",
+            r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z$",
+            r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[\+\-]\d{2}:\d{2}$",
+            r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$",
+        )
+        return any(re.match(pattern, text) for pattern in iso_patterns)
+
+    def _is_narrative_key(self, key: str) -> bool:
+        """Return True if key likely contains narrative text."""
+        lowered = key.lower()
+        narrative_keys = (
+            "description",
+            "summary",
+            "overview",
+            "details",
+            "narrative",
+            "notes",
+            "comment",
+            "analysis",
+            "text",
+            "message",
+        )
+        return any(token in lowered for token in narrative_keys)
 
 
 # Singleton instance
